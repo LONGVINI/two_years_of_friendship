@@ -1,0 +1,100 @@
+/* CSS Variables & Design System */
+@property --bg-gradient-start {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #0c0d14;
+}
+@property --bg-gradient-end {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #050508;
+}
+
+:root {
+  --font-display: 'Playfair Display', Georgia, serif;
+  --font-title: 'Outfit', 'Inter', sans-serif;
+  --font-sans: 'Inter', sans-serif;
+
+  /* Default theme (General Dark) */
+  --bg-gradient-start: #0c0d14;
+  --bg-gradient-end: #050508;
+  --color-primary: #a78bfa;
+  --color-primary-rgb: 167, 139, 250;
+  --color-text-main: #f3f4f6;
+  --color-text-muted: #9ca3af;
+  --glass-bg: rgba(17, 19, 31, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-shadow: rgba(0, 0, 0, 0.5);
+  
+  --transition-smooth: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-quick: all 0.2s ease;
+}
+
+/* Base resets */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--bg-gradient-end);
+  color: var(--color-text-main);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Ambient dynamic background */
+.app-container {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
+  position: relative;
+  overflow: hidden;
+  transition: --bg-gradient-start 0.6s cubic-bezier(0.16, 1, 0.3, 1), --bg-gradient-end 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ambient-light {
+  position: absolute;
+  width: 600px;
+  height: 600px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(var(--color-primary-rgb), 0.12) 0%, rgba(var(--color-primary-rgb), 0) 70%);
+  top: -10%;
+  left: -10%;
+  pointer-events: none;
+  filter: blur(80px);
+  animation: floatLight 25s infinite alternate ease-in-out;
+  transition: var(--transition-smooth);
+}
+
+.ambient-light-secondary {
+  position: absolute;
+  width: 500px;
+  height: 500px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(var(--color-primary-rgb), 0.08) 0%, rgba(var(--color-primary-rgb), 0) 70%);
+  bottom: -10%;
+  right: -10%;
+  pointer-events: none;
+  filter: blur(80px);
+  animation: floatLightSecondary 20s infinite alternate ease-in-out;
+  transition: var(--transition-smooth);
+}
+
+@keyframes floatLight {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(150px, 80px) scale(1.2); }
+}
+
+@keyframes floatLightSecondary {
+  0% { transform: translate(0, 0) scale(1.1); }
+  100% { transform: translate(-100px, -120px) scale(0.9); }
+}

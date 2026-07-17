@@ -1,0 +1,390 @@
+.book-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 40px 20px;
+  position: relative;
+  z-index: 10;
+}
+
+.background-canvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* Glassmorphic header/controls */
+.album-header {
+  margin-bottom: 25px;
+  text-align: center;
+  backdrop-filter: blur(12px);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  padding: 12px 28px;
+  border-radius: 50px;
+  box-shadow: 0 8px 32px var(--glass-shadow);
+  transition: var(--transition-smooth);
+}
+
+.album-header h1 {
+  font-family: var(--font-title);
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--color-primary);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.album-header span {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-sans);
+  letter-spacing: 1px;
+}
+
+/* 3D Book Layout */
+.book-wrapper {
+  position: relative;
+  width: 900px;
+  height: 580px;
+  perspective: 2000px; /* Crucial for 3D depth */
+  transition: var(--transition-smooth);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+}
+
+/* The actual book structure */
+.book {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: var(--transition-smooth);
+}
+
+/* Center binding shadow */
+.book::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 16px;
+  height: 100%;
+  background: linear-gradient(to right, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0) 70%, rgba(0,0,0,0.4) 100%);
+  transform: translateZ(10px);
+  z-index: 100;
+  pointer-events: none;
+}
+
+/* Page styles */
+.page {
+  position: absolute;
+  width: 50%;
+  height: 100%;
+  top: 0;
+  transform-style: preserve-3d;
+  transform-origin: left center;
+  transition: transform 0.6s cubic-bezier(0.645, 0.045, 0.355, 1);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Left pages stack */
+.page.left-page {
+  left: 0;
+  transform: rotateY(0deg);
+  transform-origin: right center; /* Точка сгиба на переплете (справа) */
+  z-index: 2;
+}
+
+/* Right pages stack */
+.page.right-page {
+  left: 50%;
+  transform: rotateY(0deg);
+  transform-origin: left center; /* Точка сгиба на переплете (слева) */
+  z-index: 1;
+}
+
+/* Front & Back page faces */
+.page-face {
+  position: absolute !important;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden; /* Chromium/Safari fix */
+  background-color: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.3);
+  display: flex;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.page-face.front {
+  z-index: 2;
+}
+
+.page-face.back {
+  transform: rotateY(180deg);
+  z-index: 1;
+}
+
+/* Left page face layout (Image page) */
+.image-page {
+  width: 100%;
+  height: 100%;
+  /* Removed position: relative to avoid overlapping coordinate conflicts */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.image-page img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+  transition: transform 0.5s ease;
+  min-height: 0; /* Flexbox overflow constraint */
+}
+
+.image-page:hover img {
+  transform: scale(1.02);
+}
+
+.year-badge {
+  position: absolute;
+  top: 15px;
+  left: 15px;
+  padding: 4px 12px;
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: 20px;
+  font-family: var(--font-title);
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: #000;
+  z-index: 20; /* Fixed: always visible above hovered images */
+  pointer-events: none; /* Mouse hover passes directly to image */
+}
+
+/* Right page face layout (Content page) */
+.content-page {
+  width: 100%;
+  height: 100%;
+  padding: 45px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background-image: linear-gradient(to right, rgba(255,255,255,0.01) 0%, rgba(255,255,255,0.03) 100%);
+  /* Removed position: relative to avoid overlapping coordinate conflicts */
+  box-sizing: border-box;
+}
+
+.content-page::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 30px;
+  height: 100%;
+  background: linear-gradient(to right, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0) 100%);
+}
+
+.page-header h2 {
+  font-family: var(--font-title);
+  font-size: 1.8rem;
+  font-weight: 800;
+  margin-bottom: 5px;
+  color: var(--color-primary);
+}
+
+.page-date {
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  letter-spacing: 1px;
+}
+
+.page-body {
+  flex-grow: 1;
+  margin-top: 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.page-description {
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--color-text-main);
+  opacity: 0.9;
+}
+
+.page-story {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 1.1rem;
+  line-height: 1.7;
+  color: var(--color-text-muted);
+  border-left: 2px solid var(--color-primary);
+  padding-left: 15px;
+  margin-top: 10px;
+}
+
+.page-footer {
+  font-family: var(--font-title);
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  padding-top: 15px;
+}
+
+/* Controls panel below the book */
+.controls-panel {
+  margin-top: 30px;
+  display: flex;
+  align-items: center;
+  gap: 25px;
+  backdrop-filter: blur(12px);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  padding: 10px 25px;
+  border-radius: 50px;
+  box-shadow: 0 8px 32px var(--glass-shadow);
+  z-index: 10;
+}
+
+.control-btn {
+  background: none;
+  border: none;
+  color: var(--color-text-main);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-quick);
+}
+
+.control-btn:hover:not(:disabled) {
+  background: rgba(255,255,255,0.05);
+  color: var(--color-primary);
+  transform: scale(1.1);
+}
+
+.control-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.page-indicator {
+  font-family: var(--font-title);
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+/* Timeline navigation */
+.timeline-slider-container {
+  width: 100%;
+  max-width: 600px;
+  margin-top: 25px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 10;
+}
+
+.timeline-labels {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0 10px;
+}
+
+.timeline-label {
+  font-size: 0.75rem;
+  font-family: var(--font-title);
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  transition: var(--transition-quick);
+}
+
+.timeline-label.active {
+  color: var(--color-primary);
+  transform: scale(1.1);
+}
+
+.timeline-slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  outline: none;
+  cursor: pointer;
+  position: relative;
+}
+
+.timeline-slider::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 4px;
+  cursor: pointer;
+}
+
+.timeline-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  box-shadow: 0 0 10px var(--color-primary);
+  cursor: pointer;
+  margin-top: -5px;
+  transition: transform 0.1s ease;
+}
+
+.timeline-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.3);
+}
+
+/* Responsive adjustments */
+@media (max-width: 950px) {
+  .book-wrapper {
+    width: 90vw;
+    height: 58vw;
+  }
+  .content-page {
+    padding: 20px;
+  }
+  .page-header h2 {
+    font-size: 1.3rem;
+  }
+  .page-story {
+    font-size: 0.9rem;
+  }
+}
