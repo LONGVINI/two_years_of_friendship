@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Volume2, VolumeX, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { ChevronLeft, ChevronRight, Volume2, VolumeX, RefreshCw, Play, Pause, Clock } from 'lucide-react';
+import ScratchGame from './ScratchGame';
+import PolaroidGame from './PolaroidGame';
 import './Book.css';
 
 export default function Book() {
@@ -15,7 +17,15 @@ export default function Book() {
     direction: null,
     isReleasing: false
   });
+  
+  // Autoplay
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playInterval, setPlayInterval] = useState(15000); // 15 seconds by default
   const dragRef = useRef({ startX: 0, R: 0, centerX: 0 });
+  const bgRef = useRef({
+    start: [5, 5, 8],
+    end: [10, 10, 15]
+  });
 
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -26,11 +36,19 @@ export default function Book() {
   const mouseRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
 
   // Fetch drawings list
+  const isCoverClosed = currentIndex === 0 && !isFlipping && !dragState.isDragging && !dragState.isReleasing;
+
   useEffect(() => {
     fetch(`${import.meta.env.BASE_URL}album.json`)
       .then((res) => res.json())
       .then((data) => {
-        setDrawings(data);
+        const coverDrawing = {
+          id: 'cover',
+          isCover: true,
+          year: '2016',
+          eraTheme: { bg: ['#111111', '#1a1a2e'], primary: '#2dd4bf' }
+        };
+        setDrawings([coverDrawing, ...data]);
         setLoading(false);
       })
       .catch((err) => {
@@ -38,6 +56,16 @@ export default function Book() {
         setLoading(false);
       });
   }, []);
+
+  // Helper for colors
+  const hexToRgb = (hex) => {
+    if (!hex) return [0,0,0];
+    // Expand shorthand form (e.g. "03F") to full form (e.g. "0033FF")
+    const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
+    hex = hex.replace(shorthandRegex, (m, r, g, b) => r + r + g + g + b + b);
+    let result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)] : [0,0,0];
+  };
 
   // Background particle animation system (Dynamic Eras)
   useEffect(() => {
@@ -47,12 +75,16 @@ export default function Book() {
     const ctx = canvas.getContext('2d');
     
     let animationId;
-    let width = (canvas.width = window.innerWidth);
-    let height = (canvas.height = window.innerHeight);
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
 
     const handleResize = () => {
-      width = canvas.width = window.innerWidth;
-      height = canvas.height = window.innerHeight;
+      width = window.innerWidth;
+      height = window.innerHeight;
+      if (canvas.width !== width) canvas.width = width;
+      if (canvas.height !== height) canvas.height = height;
     };
     
     const handlePointerMove = (e) => {
@@ -68,7 +100,8 @@ export default function Book() {
 
     const activeDrawing = drawings[currentIndex];
     const currentYear = parseInt(activeDrawing?.year || 2016);
-    const primaryColor = activeDrawing?.eraTheme?.primary || '#2dd4bf';
+    const primaryColorHex = activeDrawing?.eraTheme?.primary || '#2dd4bf';
+    const primaryColorRgb = hexToRgb(primaryColorHex);
     
     let era = 'watercolor';
     if (currentYear <= 2018) era = 'constellation';
@@ -76,98 +109,173 @@ export default function Book() {
     else if (currentYear <= 2022) era = 'sparks';
     else if (currentYear <= 2024) era = 'orbit';
 
-    // Track era transitions to re-seed or adjust particles smoothly
-    if (!particlesRef.current || particlesRef.current.era !== era) {
+    // Initialize unified particles on mount or if physics state is missing
+    if (!particlesRef.current || !particlesRef.current.particles || !particlesRef.current.physics) {
       const particles = [];
-      const particleCount = era === 'sparks' ? 80 : era === 'constellation' ? 60 : 45;
-      
-      for (let i = 0; i < particleCount; i++) {
-        // Carry over old particles if they exist, to morph smoothly
-        const oldP = particlesRef.current?.particles?.[i];
+      for (let i = 0; i < 70; i++) {
         particles.push({
-          x: oldP ? oldP.x : Math.random() * width,
-          y: oldP ? oldP.y : Math.random() * height,
-          vx: oldP ? oldP.vx : (Math.random() - 0.5) * 2,
-          vy: oldP ? oldP.vy : (Math.random() - 0.5) * 2,
-          size: Math.random() * 4 + 1.5,
+          x: Math.random() * width,
+          y: Math.random() * height,
+          vx: (Math.random() - 0.5) * 2,
+          vy: (Math.random() - 0.5) * 2,
+          size: Math.random() * 2 + 1,
           alpha: Math.random() * 0.5 + 0.1,
           angle: Math.random() * Math.PI * 2, // for orbit
-          orbitRadius: Math.random() * 200 + 50,
-          orbitCenter: { x: width/2, y: height/2 }
+          orbitRadius: Math.random() * 200 + 50
         });
       }
-      particlesRef.current = { era, particles };
+      particlesRef.current = {
+        particles,
+        physics: {
+          upwardForce: 0,
+          centerGravity: 0,
+          orbitSpeed: 0,
+          randomJitter: 0.1,
+          targetSize: 2,
+          lineOpacity: 0,
+          glowMultiplier: 4,
+          primaryColor: [45, 212, 191], // rgb array
+          friction: 0.95
+        }
+      };
     }
 
     const handleWindowClick = (e) => {
       if (!particlesRef.current?.particles) return;
       for (let i = 0; i < 15; i++) {
         particlesRef.current.particles.push({
-          x: e.clientX,
-          y: e.clientY,
-          vx: (Math.random() - 0.5) * 12,
-          vy: (Math.random() - 0.5) * 12,
+          x: e.clientX + (Math.random() - 0.5) * 10,
+          y: e.clientY + (Math.random() - 0.5) * 10,
+          vx: (Math.random() - 0.5) * 5,
+          vy: (Math.random() - 0.5) * 5,
           size: Math.random() * 5 + 2,
           alpha: 1,
-          decay: Math.random() * 0.03 + 0.01,
-          angle: 0, orbitRadius: 0, orbitCenter: {x: e.clientX, y: e.clientY}
+          decay: Math.random() * 0.02 + 0.01,
+          angle: 0, orbitRadius: 0
         });
       }
     };
     window.addEventListener('click', handleWindowClick);
 
     const animate = () => {
-      ctx.clearRect(0, 0, width, height);
-      ctx.globalCompositeOperation = era === 'fog' ? 'source-over' : 'screen';
+      // Smooth Lerping Utility
+      const lerpColor = (current, target, factor = 0.015) => {
+        return [
+          current[0] + (target[0] - current[0]) * factor,
+          current[1] + (target[1] - current[1]) * factor,
+          current[2] + (target[2] - current[2]) * factor
+        ];
+      };
+
+      // 1. Update Background Gradient
+      const targetBgHex = activeDrawing?.eraTheme?.bg || ['#050508', '#0a0a0f'];
+      const targetStart = hexToRgb(targetBgHex[0]);
+      const targetEnd = hexToRgb(targetBgHex[1] || targetBgHex[0]);
+      
+      bgRef.current.start = lerpColor(bgRef.current.start, targetStart);
+      bgRef.current.end = lerpColor(bgRef.current.end, targetEnd);
+
+      ctx.globalCompositeOperation = 'source-over';
+      const bgGrad = ctx.createLinearGradient(0, 0, 0, height);
+      bgGrad.addColorStop(0, `rgb(${Math.round(bgRef.current.start[0])}, ${Math.round(bgRef.current.start[1])}, ${Math.round(bgRef.current.start[2])})`);
+      bgGrad.addColorStop(1, `rgb(${Math.round(bgRef.current.end[0])}, ${Math.round(bgRef.current.end[1])}, ${Math.round(bgRef.current.end[2])})`);
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, width, height);
+
+      // 2. Determine Target Physics for current Era
+      const targetPhysics = {
+        upwardForce: era === 'sparks' ? 1.5 : era === 'fog' ? 0.3 : era === 'watercolor' ? 0.02 : 0,
+        centerGravity: era === 'orbit' ? 0.005 : 0,
+        orbitSpeed: era === 'orbit' ? 0.003 : 0,
+        randomJitter: era === 'sparks' ? 0.8 : era === 'watercolor' ? 0.05 : era === 'orbit' ? 0.02 : 0.2,
+        targetSize: era === 'watercolor' ? 40 : era === 'fog' ? 25 : era === 'orbit' ? 3 : era === 'constellation' ? 2 : 1.5,
+        lineOpacity: era === 'constellation' ? 0.4 : 0,
+        glowMultiplier: (era === 'fog' || era === 'watercolor') ? 2 : 4,
+        friction: era === 'orbit' ? 0.99 : 0.93,
+      };
+
+      // 3. Smoothly Interpolate Global Physics State
+      const pState = particlesRef.current.physics;
+      
+      // Hot-reload recovery: if state was infected by NaN, reset it
+      if (!isFinite(pState.friction)) pState.friction = targetPhysics.friction;
+      if (!isFinite(pState.upwardForce)) pState.upwardForce = targetPhysics.upwardForce;
+
+      const lerpSpeed = 0.015;
+      pState.upwardForce += (targetPhysics.upwardForce - pState.upwardForce) * lerpSpeed;
+      pState.centerGravity += (targetPhysics.centerGravity - pState.centerGravity) * lerpSpeed;
+      pState.orbitSpeed += (targetPhysics.orbitSpeed - pState.orbitSpeed) * lerpSpeed;
+      pState.randomJitter += (targetPhysics.randomJitter - pState.randomJitter) * lerpSpeed;
+      pState.targetSize += (targetPhysics.targetSize - pState.targetSize) * lerpSpeed;
+      pState.lineOpacity += (targetPhysics.lineOpacity - pState.lineOpacity) * lerpSpeed;
+      pState.glowMultiplier += (targetPhysics.glowMultiplier - pState.glowMultiplier) * lerpSpeed;
+      pState.friction += (targetPhysics.friction - pState.friction) * lerpSpeed;
+      
+      pState.primaryColor = lerpColor(pState.primaryColor, primaryColorRgb, lerpSpeed);
+      const pColorRgba = `rgba(${Math.round(pState.primaryColor[0])}, ${Math.round(pState.primaryColor[1])}, ${Math.round(pState.primaryColor[2])}`;
+
+      ctx.globalCompositeOperation = (era === 'fog' || era === 'watercolor') ? 'source-over' : 'screen';
       
       const mouseX = mouseRef.current.x;
       const mouseY = mouseRef.current.y;
-      
       const particles = particlesRef.current.particles;
+
+      // 4. Update and Draw Particles
       for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
-        
-        // Physics logic based on Era
-        if (era === 'constellation') {
-          // Slow drift
-          p.x += p.vx * 0.2;
-          p.y += p.vy * 0.2;
-          p.size = 2;
-        } else if (era === 'fog') {
-          // Slow upwards blur
-          p.y -= 0.5;
-          p.x += Math.sin(p.y * 0.01) * 0.5;
-          p.size = 25; // Large blurred circles
-        } else if (era === 'sparks') {
-          // Fast upwards, erratic
-          p.y -= 2;
-          p.x += (Math.random() - 0.5) * 2;
-          p.size = 1.5;
-        } else if (era === 'orbit') {
-          // Orbit around center
-          p.angle += 0.002;
+
+        // Apply Forces
+        p.vy -= pState.upwardForce * 0.1;
+        p.vx += (Math.random() - 0.5) * pState.randomJitter;
+        p.vy += (Math.random() - 0.5) * pState.randomJitter;
+
+        // Apply Orbit
+        if (pState.centerGravity > 0.0001) {
+          p.angle += pState.orbitSpeed;
           const targetX = width/2 + Math.cos(p.angle) * p.orbitRadius;
           const targetY = height/2 + Math.sin(p.angle) * p.orbitRadius;
-          p.x += (targetX - p.x) * 0.05;
-          p.y += (targetY - p.y) * 0.05;
-          p.size = 3;
-        } else if (era === 'watercolor') {
-          // Massive, extremely slow drift
-          p.x += p.vx * 0.1;
-          p.y += p.vy * 0.1;
-          p.size = 40;
+          p.vx += (targetX - p.x) * pState.centerGravity;
+          p.vy += (targetY - p.y) * pState.centerGravity;
         }
-        
-        // Mouse Repulsion (Interactive)
+
+        // Mutual Repulsion (The "Explosion" / Pushing apart logic)
+        for (let j = i - 1; j >= 0; j--) {
+          const p2 = particles[j];
+          const dx = p.x - p2.x;
+          const dy = p.y - p2.y;
+          const distSq = dx*dx + dy*dy;
+          if (distSq < 2500 && distSq > 0.1) { // 50px radius
+            const dist = Math.sqrt(distSq);
+            const force = (50 - dist) / 50;
+            const fx = (dx / dist) * force * 0.3; // Repulsion strength
+            const fy = (dy / dist) * force * 0.3;
+            p.vx += fx;
+            p.vy += fy;
+            // Also push the other particle
+            if (!p2.decay) {
+              p2.vx -= fx;
+              p2.vy -= fy;
+            }
+          }
+        }
+
+        // Mouse Interaction
         const dx = p.x - mouseX;
         const dy = p.y - mouseY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 150) {
-          const force = (150 - dist) / 150;
-          p.x += (dx / dist) * force * 5;
-          p.y += (dy / dist) * force * 5;
+        const distSqM = dx*dx + dy*dy;
+        if (distSqM < 22500 && distSqM > 0.1) { // 150px radius
+          const distM = Math.sqrt(distSqM);
+          const forceM = (150 - distM) / 150;
+          p.vx += (dx / distM) * forceM * 2;
+          p.vy += (dy / distM) * forceM * 2;
         }
-        
+
+        // Apply Velocity & Friction
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vx *= pState.friction;
+        p.vy *= pState.friction;
+
         // Decay logic for click sparks
         if (p.decay) {
           p.alpha -= p.decay;
@@ -176,6 +284,8 @@ export default function Book() {
             continue;
           }
         } else {
+          // Smoothly adapt size to current era
+          p.size += (pState.targetSize - p.size) * 0.05;
           // Screen wrap
           if (p.x < -p.size*2) p.x = width + p.size*2;
           if (p.x > width + p.size*2) p.x = -p.size*2;
@@ -183,37 +293,43 @@ export default function Book() {
           if (p.y > height + p.size*2) p.y = -p.size*2;
         }
 
-        // Drawing
+        // Draw Particle
         ctx.beginPath();
-        let gradRadius = p.size * (era === 'fog' || era === 'watercolor' ? 2 : 4);
+        const gradRadius = Math.max(0.1, p.size * pState.glowMultiplier);
+        if (!isFinite(p.x) || !isFinite(p.y) || !isFinite(gradRadius)) {
+          console.error("NAN DETECTED!", {x: p.x, y: p.y, size: p.size, glow: pState.glowMultiplier, vx: p.vx, vy: p.vy, pState});
+        }
         const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, gradRadius);
-        grad.addColorStop(0, primaryColor);
+        
+        grad.addColorStop(0, `${pColorRgba}, 1)`);
         if (era === 'fog' || era === 'watercolor') {
-          grad.addColorStop(0.5, primaryColor + '11');
+          grad.addColorStop(0.5, `${pColorRgba}, 0.1)`);
           grad.addColorStop(1, 'transparent');
         } else {
-          grad.addColorStop(0.3, primaryColor + '44');
+          grad.addColorStop(0.3, `${pColorRgba}, 0.3)`);
           grad.addColorStop(1, 'transparent');
         }
         
         ctx.fillStyle = grad;
-        ctx.globalAlpha = Math.max(0, p.alpha * (era === 'watercolor' ? 0.3 : 1));
+        const alphaMultiplier = era === 'watercolor' ? 0.3 : 1;
+        ctx.globalAlpha = Math.max(0, Math.min(1, p.alpha * alphaMultiplier));
         ctx.arc(p.x, p.y, gradRadius, 0, Math.PI * 2);
         ctx.fill();
-        
-        // Draw constellation lines
-        if (era === 'constellation' && !p.decay) {
+
+        // Draw constellation lines based on smoothly lerped lineOpacity
+        if (pState.lineOpacity > 0.01 && !p.decay) {
           for (let j = i - 1; j >= 0; j--) {
             const p2 = particles[j];
             if (p2.decay) continue;
             const d2x = p.x - p2.x;
             const d2y = p.y - p2.y;
-            const dist2 = Math.sqrt(d2x*d2x + d2y*d2y);
-            if (dist2 < 120) {
+            const distSq2 = d2x*d2x + d2y*d2y;
+            if (distSq2 < 14400) { // 120px radius
+              const dist2 = Math.sqrt(distSq2);
               ctx.beginPath();
-              ctx.strokeStyle = primaryColor;
+              ctx.strokeStyle = `${pColorRgba}, 1)`;
               ctx.lineWidth = 0.5;
-              ctx.globalAlpha = (1 - dist2 / 120) * 0.3;
+              ctx.globalAlpha = Math.max(0, (1 - dist2 / 120) * pState.lineOpacity);
               ctx.moveTo(p.x, p.y);
               ctx.lineTo(p2.x, p2.y);
               ctx.stroke();
@@ -239,24 +355,24 @@ export default function Book() {
   useEffect(() => {
     if (drawings.length === 0 || !drawings[currentIndex]) return;
     
-    const activeDrawing = drawings[currentIndex];
-    const theme = activeDrawing.eraTheme || {
-      bgStart: '#0c0d14',
-      bgEnd: '#050508',
-      primary: '#a78bfa',
-      primaryRgb: '167, 139, 250',
-      glass: 'rgba(17, 19, 31, 0.65)'
-    };
+    const theme = drawings[currentIndex]?.eraTheme || {};
+    const bgStart = theme.bgStart || (theme.bg && theme.bg[0]) || '#0c0d14';
+    const bgEnd = theme.bgEnd || (theme.bg && theme.bg[1]) || '#050508';
+    const primary = theme.primary || '#2dd4bf';
+    const primaryRgb = theme.primaryRgb || '45, 212, 191';
+    const glass = theme.glass || 'rgba(17, 19, 31, 0.65)';
 
     // Convert rgba background color to 100% solid rgb (no transparency)
-    const solidBg = theme.glass.replace(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*[\d.]+\)/, 'rgb($1, $2, $3)');
+    const solidBg = glass.replace(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*[\d.]+\)/, 'rgb($1, $2, $3)');
 
     const root = document.documentElement;
-    root.style.setProperty('--bg-gradient-start', theme.bgStart);
-    root.style.setProperty('--bg-gradient-end', theme.bgEnd);
-    root.style.setProperty('--color-primary', theme.primary);
-    root.style.setProperty('--color-primary-rgb', theme.primaryRgb);
+    root.style.setProperty('--bg-gradient-start', bgStart);
+    root.style.setProperty('--bg-gradient-end', bgEnd);
+    root.style.setProperty('--color-primary', primary);
+    root.style.setProperty('--color-primary-rgb', primaryRgb);
     root.style.setProperty('--glass-bg', solidBg);
+    
+    bgRef.current.target = [hexToRgb(bgStart), hexToRgb(bgEnd)];
   }, [currentIndex, drawings]);
 
   // Play recorded mp3 paper sounds in sequence
@@ -271,31 +387,46 @@ export default function Book() {
     }
   };
 
-  const handleNext = () => {
-    if (currentIndex >= drawings.length - 1) return;
-    setIsFlipping(true);
-    setFlipDirection('next');
-    playPaperSound();
+  const handleNext = useCallback((isAuto = false) => {
+    if (isAuto !== true && isPlaying) setIsPlaying(false);
+    if (currentIndex < drawings.length - 1 && !isFlipping) {
+      playPaperSound();
+      setFlipDirection('next');
+      setIsFlipping(true);
+      setTimeout(() => {
+        setCurrentIndex(prev => prev + 1);
+        setIsFlipping(false);
+        setFlipDirection(null);
+      }, 800); // SLOW FLIP
+    } else if (currentIndex >= drawings.length - 1 && isPlaying) {
+      setIsPlaying(false); // Stop autoplay at the end
+    }
+  }, [currentIndex, drawings.length, isFlipping, isPlaying]);
 
-    setTimeout(() => {
-      setCurrentIndex((prev) => Math.min(prev + 1, drawings.length - 1));
-      setIsFlipping(false);
-      setFlipDirection(null);
-    }, 300); // Super fast flip duration
-  };
+  const handlePrev = useCallback((isAuto = false) => {
+    if (isAuto !== true && isPlaying) setIsPlaying(false);
+    if (currentIndex > 0 && !isFlipping) {
+      playPaperSound();
+      setFlipDirection('prev');
+      setIsFlipping(true);
+      setTimeout(() => {
+        setCurrentIndex(prev => prev - 1);
+        setIsFlipping(false);
+        setFlipDirection(null);
+      }, 800); // SLOW FLIP
+    }
+  }, [currentIndex, isFlipping]);
 
-  const handlePrev = () => {
-    if (currentIndex === 0) return;
-    setIsFlipping(true);
-    setFlipDirection('prev');
-    playPaperSound();
-
-    setTimeout(() => {
-      setCurrentIndex((prev) => Math.max(prev - 1, 0));
-      setIsFlipping(false);
-      setFlipDirection(null);
-    }, 300);
-  };
+  // Autoplay Effect
+  useEffect(() => {
+    let timer;
+    if (isPlaying && !isCoverClosed) {
+      timer = setInterval(() => {
+        handleNext(true); // Pass true to indicate it's an auto-flip
+      }, playInterval);
+    }
+    return () => clearInterval(timer);
+  }, [isPlaying, playInterval, isCoverClosed, handleNext]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -304,23 +435,29 @@ export default function Book() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  });
+  }, [handleNext, handlePrev]);
 
   const handlePointerDown = (e) => {
     if (e.button !== 0 && e.pointerType === 'mouse') return;
     if (isFlipping) return;
     
+    if (isPlaying) setIsPlaying(false); // Stop autoplay if user touches the book
+
+    const clientX = e.clientX !== undefined ? e.clientX : (e.touches && e.touches[0].clientX);
+    if (clientX === undefined) return;
+
     // Calculate book spine center
     const rect = bookRef.current?.getBoundingClientRect();
     if (!rect) return;
     const centerX = rect.left + rect.width / 2;
-    const R = e.clientX - centerX;
+    const R = clientX - centerX;
     
     // Ignore clicks too close to spine to avoid crazy rotation
     if (Math.abs(R) < 30) return;
 
-    dragRef.current = { startX: e.clientX, R, centerX };
+    dragRef.current = { startX: clientX, R, centerX };
     setDragState({ isDragging: true, angle: 0, direction: null, isReleasing: false });
+
     if (e.target.setPointerCapture) {
       e.target.setPointerCapture(e.pointerId);
     }
@@ -330,10 +467,16 @@ export default function Book() {
     if (!dragState.isDragging || dragState.isReleasing) return;
     const { centerX, R, startX } = dragRef.current;
     
+    const clientX = e.clientX !== undefined ? e.clientX : (e.touches && e.touches[0].clientX);
+    if (clientX === undefined) return;
+
     let direction = dragState.direction;
     if (!direction) {
-      const deltaX = e.clientX - startX;
+      const deltaX = clientX - startX;
       if (Math.abs(deltaX) > 10) {
+        if (R > 0 && deltaX > 0) return; // Prevent dragging right page to the right
+        if (R < 0 && deltaX < 0) return; // Prevent dragging left page to the left
+        
         direction = R > 0 ? 'next' : 'prev';
         if (direction === 'next' && currentIndex >= drawings.length - 1) {
           setDragState({ isDragging: false, angle: 0, direction: null, isReleasing: false });
@@ -348,15 +491,22 @@ export default function Book() {
       }
     }
 
+    const totalDist = 2 * Math.abs(R);
+    let progress = 0;
+    
+    if (direction === 'next') {
+      progress = (startX - clientX) / totalDist;
+    } else if (direction === 'prev') {
+      progress = (clientX - startX) / totalDist;
+    }
+    
+    progress = Math.max(0, Math.min(1, progress));
+    
     let angle = 0;
     if (direction === 'next') {
-      let cosVal = (e.clientX - centerX) / R; // R is positive
-      cosVal = Math.max(-1, Math.min(1, cosVal));
-      angle = -Math.acos(cosVal) * (180 / Math.PI); // 0 to -180
-    } else {
-      let cosVal = (e.clientX - centerX) / R; // R is negative
-      cosVal = Math.max(-1, Math.min(1, cosVal));
-      angle = Math.acos(cosVal) * (180 / Math.PI); // 0 to 180
+      angle = -progress * 180;
+    } else if (direction === 'prev' && currentIndex > 0) {
+      angle = progress * 180;
     }
 
     setDragState(prev => ({ ...prev, direction, angle }));
@@ -365,11 +515,13 @@ export default function Book() {
   const handlePointerUp = (e) => {
     if (!dragState.isDragging || dragState.isReleasing) return;
     
+    const clientX = e.clientX || (e.changedTouches && e.changedTouches[0].clientX) || dragRef.current.startX;
+
     const { direction, angle } = dragState;
     if (!direction) {
       setDragState({ isDragging: false, angle: 0, direction: null, isReleasing: false });
       const { centerX } = dragRef.current;
-      if (e.clientX > centerX) {
+      if (clientX > centerX) {
         handleNext();
       } else {
         handlePrev();
@@ -389,12 +541,12 @@ export default function Book() {
         setTimeout(() => {
           setCurrentIndex(prev => Math.min(prev + 1, drawings.length - 1));
           setDragState({ isDragging: false, angle: 0, direction: null, isReleasing: false });
-        }, 300);
+        }, 800);
       } else {
         setDragState(prev => ({ ...prev, angle: 0 }));
         setTimeout(() => {
           setDragState({ isDragging: false, angle: 0, direction: null, isReleasing: false });
-        }, 300);
+        }, 800);
       }
     } else {
       // Prev drag goes from 0 towards 180
@@ -404,37 +556,14 @@ export default function Book() {
         setTimeout(() => {
           setCurrentIndex(prev => Math.max(prev - 1, 0));
           setDragState({ isDragging: false, angle: 0, direction: null, isReleasing: false });
-        }, 300);
+        }, 800);
       } else {
         setDragState(prev => ({ ...prev, angle: 0 }));
         setTimeout(() => {
           setDragState({ isDragging: false, angle: 0, direction: null, isReleasing: false });
-        }, 300);
+        }, 800);
       }
     }
-  };
-
-  const handleImageClick = (e) => {
-    e.stopPropagation();
-    const img = e.target;
-    img.style.transform = 'scale(1.15) rotate(' + ((Math.random()-0.5)*6) + 'deg)';
-    img.style.filter = 'brightness(1.2) drop-shadow(0 0 20px var(--color-primary))';
-    img.style.zIndex = '50';
-    playPaperSound();
-    setTimeout(() => {
-      img.style.transform = '';
-      img.style.filter = '';
-      img.style.zIndex = '';
-    }, 400);
-  };
-
-  const handleTimelineChange = (e) => {
-    if (isFlipping) return;
-    const targetIndex = parseInt(e.target.value, 10);
-    if (targetIndex === currentIndex) return;
-    
-    playPaperSound();
-    setCurrentIndex(targetIndex);
   };
 
   if (loading) {
@@ -467,55 +596,170 @@ export default function Book() {
   const staticLeftDrawing = (isPrevFlip && prevDrawing) ? prevDrawing : current;
   const staticRightDrawing = (isNextFlip && nextDrawing) ? nextDrawing : current;
 
+  // Extract chapters for bookmarks
+  const chaptersList = [];
+  drawings.forEach((d, i) => {
+    if (d.type === 'chapter') {
+      chaptersList.push({ title: d.chapterTitle || d.title, index: i });
+    }
+  });
+
+  const renderLeftFace = (drawing, isBack = false) => {
+    if (!drawing) return null;
+    const faceClass = isBack ? 'back' : 'front';
+    
+    if (drawing.isCover) {
+      return null;
+    }
+
+    if (drawing.type === 'chapter') {
+      return (
+        <div className={`page-face ${faceClass} chapter-page-left`}>
+          <div className="chapter-overlay"></div>
+          <h2>{drawing.title}</h2>
+        </div>
+      );
+    }
+    // Mini-games placeholders
+    if (drawing.type === 'scratch') {
+      return (
+        <div className="page-face image-page" style={{padding: 0}}>
+          <ScratchGame imageSrc={drawing.image} />
+        </div>
+      );
+    }
+    if (drawing.type === 'polaroids') {
+      return (
+        <div className="page-face image-page" style={{padding: 0}}>
+          <PolaroidGame />
+        </div>
+      );
+    }
+    // Normal Image Page
+    return (
+      <div className={`page-face ${faceClass} image-page`}>
+        <div className="photo-wrapper">
+          <div className="photo-corner tl"></div>
+          <div className="photo-corner tr"></div>
+          <div className="photo-corner bl"></div>
+          <div className="photo-corner br"></div>
+          <img 
+            src={`${import.meta.env.BASE_URL}${drawing.image}`} 
+            alt={drawing.title} 
+            className="drawing-image" 
+            draggable={false}
+            onLoad={(e) => {
+              const wrapper = e.target.closest('.photo-wrapper');
+              if (wrapper && e.target.naturalWidth && e.target.naturalHeight) {
+                wrapper.style.aspectRatio = `${e.target.naturalWidth} / ${e.target.naturalHeight}`;
+              }
+            }}
+            onError={(e) => {
+              e.target.src = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%25%22 height=%22100%25%22><rect width=%22100%25%22 height=%22100%25%22 fill=%22%23111%22/><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 fill=%22%23555%22 font-family=%22sans-serif%22>Ошибка загрузки...</text></svg>';
+            }}
+            style={{ width: '100%', height: '100%', objectFit: 'cover', userSelect: 'none', display: 'block' }}
+          />
+        </div>
+      </div>
+    );
+  };
+
+  const renderRightFace = (drawing, isBack = false) => {
+    if (!drawing) return null;
+    const faceClass = isBack ? 'back' : 'front';
+
+    if (drawing.isCover) {
+      return (
+        <div 
+          className={`page-face ${faceClass} book-cover`} 
+          onClick={() => { if (currentIndex === 0) handleNext(); }}
+        >
+          <div className="cover-content">
+            <h1>Искусство длиною в жизнь</h1>
+            <p>Личное портфолио Рузанны Манвелян</p>
+            <div className="click-to-open">Кликните или потяните, чтобы открыть</div>
+          </div>
+        </div>
+      );
+    }
+
+    if (drawing.type === 'chapter') {
+      return (
+        <div className={`page-face ${faceClass} chapter-page-right`}>
+          <div className="chapter-overlay"></div>
+          <p className="chapter-subtitle">{drawing.description}</p>
+        </div>
+      );
+    }
+    // Mini-games placeholders right side
+    if (drawing.type === 'scratch' || drawing.type === 'polaroids') {
+      return (
+        <div className={`page-face ${faceClass} content-page`} style={{justifyContent: 'center', alignItems: 'center'}}>
+           <p className="page-description" style={{textAlign: 'center'}}>{drawing.description}</p>
+        </div>
+      );
+    }
+    // Normal Content Page
+    return (
+      <div className={`page-face ${faceClass} content-page`}>
+        <div className="page-header">
+          <h2>{drawing.title}</h2>
+        </div>
+        <div className="page-body">
+          <p className="page-description">{drawing.description}</p>
+          {drawing.story && <p className="page-story">{drawing.story}</p>}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="book-container">
       <canvas ref={canvasRef} className="background-canvas" />
-      {/* Header */}
-      <header className="album-header">
-        <h1>Искусство длиною в жизнь</h1>
-        <span>Рузанна Манвелян</span>
-      </header>
 
       {/* 3D Book */}
       <div className="book-wrapper" ref={bookRef}>
+        {/* Bookmarks */}
+        <div className="book-bookmarks" style={{ opacity: isCoverClosed ? 0 : 1, pointerEvents: isCoverClosed ? 'none' : 'auto', transition: isCoverClosed ? 'opacity 0.2s ease 0s' : 'opacity 0.6s ease 0.8s' }}>
+          {chaptersList.map((chap, i) => {
+            const isActive = currentIndex >= chap.index && (i === chaptersList.length - 1 || currentIndex < chaptersList[i+1].index);
+            return (
+              <div 
+                key={i} 
+                className={`bookmark ${isActive ? 'active' : ''}`}
+                onClick={() => {
+                  playPaperSound();
+                  setCurrentIndex(chap.index);
+                }}
+              >
+                {chap.title}
+              </div>
+            );
+          })}
+        </div>
+
         <div 
-          className={`book ${isFlipping ? 'flipping' : ''} ${(dragState.isDragging || dragState.isReleasing) ? 'dragging' : ''}`}
+          className={`book ${isFlipping ? 'flipping' : ''} ${(dragState.isDragging || dragState.isReleasing) ? 'dragging' : ''} ${isCoverClosed ? 'closed' : ''}`}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           style={{ touchAction: 'none' }}
         >
           
-          {/* Static Left Page (Shows underneath drawing during prev flip) */}
-          <div className="page left-page">
-            <div className="page-face front image-page">
-              <div className="year-badge">{staticLeftDrawing.year}</div>
-                <img 
-                  src={`${import.meta.env.BASE_URL}${staticLeftDrawing.image}`} 
-                  alt={staticLeftDrawing.title} 
-                  onClick={handleImageClick}
-                  draggable={false}
-                  onError={(e) => {
-                    e.target.src = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%25%22 height=%22100%25%22><rect width=%22100%25%22 height=%22100%25%22 fill=%22%23111%22/><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 fill=%22%23555%22 font-family=%22sans-serif%22>Загрузка изображения...</text></svg>';
-                  }}
-                  style={{ transition: 'all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)', cursor: 'pointer', userSelect: 'none' }}
-                />
-            </div>
-          </div>
+            {/* Static Left Page (Shows underneath drawing during prev flip) */}
+            {staticLeftDrawing && !staticLeftDrawing.isCover && (
+              <div className="page left-page" style={{ 
+                opacity: isCoverClosed ? 0 : 1, 
+                visibility: isCoverClosed ? 'hidden' : 'visible',
+                transition: isCoverClosed ? 'opacity 0.2s ease 0s, visibility 0s linear 0.2s' : 'opacity 0.6s ease 0.3s, visibility 0s linear 0s' 
+              }}>
+                {renderLeftFace(staticLeftDrawing, false)}
+              </div>
+            )}
 
           {/* Static Right Page (Shows underneath description during next flip) */}
           <div className="page right-page">
-            <div className="page-face front content-page">
-              <div className="page-header">
-                <h2>{staticRightDrawing.title}</h2>
-                <div className="page-date">{staticRightDrawing.date}</div>
-              </div>
-              <div className="page-body">
-                <p className="page-description">{staticRightDrawing.description}</p>
-                {staticRightDrawing.story && <p className="page-story">{staticRightDrawing.story}</p>}
-              </div>
-
-            </div>
+            {renderRightFace(staticRightDrawing, false)}
           </div>
 
           {/* Dynamic Drag/Flipping Page (Next) */}
@@ -526,40 +770,21 @@ export default function Book() {
                 showNextDrag 
                   ? { 
                       transform: `rotateY(${dragState.angle}deg)`, 
-                      transition: dragState.isReleasing ? 'transform 0.3s ease-out' : 'none',
+                      transition: dragState.isReleasing ? 'transform 0.8s cubic-bezier(0.645, 0.045, 0.355, 1)' : 'none',
                       zIndex: 10
                     }
                   : { 
                       transform: 'rotateY(0deg)', 
-                      animation: 'flipToLeft 0.3s forwards cubic-bezier(0.645, 0.045, 0.355, 1)',
+                      animation: 'flipToLeft 0.8s forwards cubic-bezier(0.645, 0.045, 0.355, 1)',
                       zIndex: 10
                     }
               }
             >
               {/* Front of the flipping page: shows current description during flip */}
-              <div className="page-face front content-page">
-                <div className="page-header">
-                  <h2>{current.title}</h2>
-                  <div className="page-date">{current.date}</div>
-                </div>
-                <div className="page-body">
-                  <p className="page-description">{current.description}</p>
-                  {current.story && <p className="page-story">{current.story}</p>}
-                </div>
-
-              </div>
+              {renderRightFace(current, false)}
 
               {/* Back of the flipping page: shows next drawing during flip */}
-              <div className="page-face back image-page">
-                <div className="year-badge">{nextDrawing.year}</div>
-                <img 
-                  src={`${import.meta.env.BASE_URL}${nextDrawing.image}`} 
-                  alt={nextDrawing.title}
-                  onClick={handleImageClick}
-                  draggable={false}
-                  style={{ transition: 'all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)', cursor: 'pointer', userSelect: 'none' }}
-                />
-              </div>
+              {renderLeftFace(nextDrawing, true)}
             </div>
           )}
 
@@ -571,68 +796,81 @@ export default function Book() {
                 showPrevDrag 
                   ? { 
                       transform: `rotateY(${dragState.angle}deg)`, 
-                      transition: dragState.isReleasing ? 'transform 0.3s ease-out' : 'none',
+                      transition: dragState.isReleasing ? 'transform 0.8s cubic-bezier(0.645, 0.045, 0.355, 1)' : 'none',
                       zIndex: 10
                     }
                   : { 
-                      transform: 'rotateY(-180deg)', 
-                      animation: 'flipToRight 0.3s forwards cubic-bezier(0.645, 0.045, 0.355, 1)',
+                      transform: 'rotateY(180deg)', 
+                      animation: 'flipToRight 0.8s forwards cubic-bezier(0.645, 0.045, 0.355, 1)',
                       zIndex: 10
                     }
               }
             >
               {/* Front of the flipping page: shows current drawing */}
-              <div className="page-face front image-page">
-                <div className="year-badge">{current.year}</div>
-                <img 
-                  src={`${import.meta.env.BASE_URL}${current.image}`} 
-                  alt={current.title}
-                  onClick={handleImageClick}
-                  draggable={false}
-                  style={{ transition: 'all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)', cursor: 'pointer', userSelect: 'none' }}
-                />
-              </div>
+              {renderLeftFace(current, false)}
 
               {/* Back of the flipping page: shows previous description */}
-              <div className="page-face back content-page">
-                <div className="page-header">
-                  <h2>{prevDrawing.title}</h2>
-                  <div className="page-date">{prevDrawing.date}</div>
-                </div>
-                <div className="page-body">
-                  <p className="page-description">{prevDrawing.description}</p>
-                  {prevDrawing.story && <p className="page-story">{prevDrawing.story}</p>}
-                </div>
-
-              </div>
+              {renderRightFace(prevDrawing, true)}
             </div>
           )}
 
         </div>
       </div>
 
-      {/* Control Buttons */}
-      <div className="controls-panel">
+      {/* Side Navigation Arrows */}
+      <div className="side-nav-container" style={{ opacity: isCoverClosed ? 0 : 1, pointerEvents: isCoverClosed ? 'none' : 'auto', transition: isCoverClosed ? 'opacity 0.2s ease 0s' : 'opacity 0.6s ease 0.8s' }}>
         <button 
-          className="control-btn" 
+          className="side-nav-btn prev" 
           onClick={handlePrev} 
-          disabled={currentIndex === 0}
+          disabled={currentIndex === 0 || isFlipping}
+        >
+          <ChevronLeft size={48} />
+        </button>
+        <button 
+          className="side-nav-btn next" 
+          onClick={handleNext} 
+          disabled={currentIndex === drawings.length - 1 || isFlipping}
+        >
+          <ChevronRight size={48} />
+        </button>
+      </div>
+
+      {/* Control Buttons */}
+      <div className="controls-panel" style={{ opacity: isCoverClosed ? 0 : 1, pointerEvents: isCoverClosed ? 'none' : 'auto', transition: isCoverClosed ? 'opacity 0.2s ease 0s' : 'opacity 0.6s ease 0.8s' }}>
+        <button 
+          className="control-btn nav-btn" 
+          onClick={handlePrev} 
+          disabled={currentIndex === 0 || isFlipping}
           title="Предыдущая страница"
         >
           <ChevronLeft size={24} />
         </button>
 
-
         <button 
           className="control-btn" 
+          onClick={() => setIsPlaying(!isPlaying)}
+          title={isPlaying ? "Остановить авто-пролистывание" : "Начать авто-пролистывание"}
+        >
+          {isPlaying ? <Pause size={20} /> : <Play size={20} />}
+        </button>
+
+        <button 
+          className="control-btn nav-btn" 
           onClick={handleNext} 
-          disabled={currentIndex >= drawings.length - 1}
+          disabled={currentIndex === drawings.length - 1 || isFlipping}
           title="Следующая страница"
         >
           <ChevronRight size={24} />
         </button>
 
-        <div style={{ width: '1px', height: '24px', background: 'rgba(255,255,255,0.1)' }}></div>
+        <button 
+          className="control-btn" 
+          onClick={() => setPlayInterval(prev => prev === 10000 ? 15000 : prev === 15000 ? 5000 : 10000)}
+          title={`Интервал: ${playInterval / 1000}с`}
+        >
+          <Clock size={20} />
+          <span style={{marginLeft: 5, fontSize: '0.8rem'}}>{playInterval / 1000}s</span>
+        </button>
 
         <button 
           className="control-btn" 
@@ -641,33 +879,6 @@ export default function Book() {
         >
           {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
         </button>
-      </div>
-
-      {/* Timeline navigation */}
-      <div className="timeline-slider-container">
-        <div className="timeline-labels">
-          {Array.from(new Set(drawings.map(d => d.year))).map((year) => {
-            const firstIndexForYear = drawings.findIndex(d => d.year === year);
-            const isActive = drawings[currentIndex]?.year === year;
-            return (
-              <span 
-                key={year} 
-                className={`timeline-label ${isActive ? 'active' : ''}`}
-                onClick={() => setCurrentIndex(firstIndexForYear)}
-              >
-                {year}
-              </span>
-            );
-          })}
-        </div>
-        <input 
-          type="range" 
-          min="0" 
-          max={drawings.length - 1} 
-          value={currentIndex} 
-          onChange={handleTimelineChange}
-          className="timeline-slider"
-        />
       </div>
 
       {/* CSS flip animations */}
