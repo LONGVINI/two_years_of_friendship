@@ -1,7 +1,9 @@
-import React from 'react'
+import React, { useState } from 'react'
 import Book from './components/Book'
+import SplashScreen from './components/SplashScreen'
 
 export default function App() {
+  const [showSplash, setShowSplash] = useState(true);
   return (
     <div className="app-container">
       {/* Decorative ambient lights that morph based on era colors */}
@@ -10,6 +12,9 @@ export default function App() {
       
       {/* Core Book Component */}
       <Book />
+      
+      {/* Splash Screen Overlay */}
+      {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
     </div>
   )
 }

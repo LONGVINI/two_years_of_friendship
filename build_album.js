@@ -24,19 +24,35 @@ const themes = {
 const years = ['2019', '2020', '2021', '2022', '2023', '2024', '2025', '2026'];
 const filesPerYear = Math.ceil(files.length / years.length);
 
+let allDescriptions = [];
+try {
+  for(let i=1; i<=4; i++) {
+    const descPath = path.join(import.meta.dirname, `descriptions_${i}.json`);
+    if(fs.existsSync(descPath)) {
+      const data = JSON.parse(fs.readFileSync(descPath, 'utf8'));
+      allDescriptions = allDescriptions.concat(data);
+    }
+  }
+} catch(e) {
+  console.log("Error reading descriptions:", e);
+}
+
 const album = files.map((file, i) => {
     // Distribute files evenly across the 8 years
     const yearIndex = Math.floor(i / filesPerYear);
     const year = years[yearIndex] || '2026';
 
+    // Map descriptions directly by index since the filenames changed
+    const descObj = allDescriptions[i] || {};
+
     return {
         id: i + 1,
         image: `ai_selection_clean/${file}`,
-        title: `Рисунок ${year} #${(i % filesPerYear) + 1}`,
+        title: descObj.title || "",
         year: year,
         date: `${year} г.`,
-        description: "Один из прекрасных рисунков этого периода, выбранный для альбома нашей дружбы.",
-        story: "Здесь будет твоя история об этой работе, чувствах или воспоминаниях. Вырази свои мысли здесь.",
+        description: descObj.description || "",
+        story: descObj.story || "",
         eraTheme: themes[year]
     };
 });

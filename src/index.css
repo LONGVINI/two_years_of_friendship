@@ -58,43 +58,61 @@ html, body, #root {
   background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
   position: relative;
   overflow: hidden;
-  transition: --bg-gradient-start 0.6s cubic-bezier(0.16, 1, 0.3, 1), --bg-gradient-end 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: --bg-gradient-start 1.5s ease-in-out, --bg-gradient-end 1.5s ease-in-out;
+}
+
+/* Deep Space Vignette Overlay */
+.app-container::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at center, transparent 30%, rgba(0,0,0,0.4) 80%, rgba(0,0,0,0.85) 100%);
+  z-index: -1;
+}
+
+.app-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  opacity: 0.25;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  z-index: -1;
+  mix-blend-mode: overlay;
 }
 
 .ambient-light {
   position: absolute;
-  width: 600px;
-  height: 600px;
+  width: 800px;
+  height: 800px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(var(--color-primary-rgb), 0.12) 0%, rgba(var(--color-primary-rgb), 0) 70%);
-  top: -10%;
-  left: -10%;
+  background: radial-gradient(circle, rgba(var(--color-primary-rgb), 0.15) 0%, rgba(var(--color-primary-rgb), 0) 70%);
+  top: 0;
+  left: 0;
   pointer-events: none;
   filter: blur(80px);
-  animation: floatLight 25s infinite alternate ease-in-out;
-  transition: var(--transition-smooth);
+  transform: translate(calc(var(--mouse-x, 50vw) - 400px), calc(var(--mouse-y, 50vh) - 400px));
+  transition: transform 1.2s cubic-bezier(0.2, 0.8, 0.2, 1), var(--transition-smooth);
+  mix-blend-mode: screen;
+  z-index: 0;
 }
 
 .ambient-light-secondary {
   position: absolute;
-  width: 500px;
-  height: 500px;
+  width: 600px;
+  height: 600px;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(var(--color-primary-rgb), 0.08) 0%, rgba(var(--color-primary-rgb), 0) 70%);
-  bottom: -10%;
-  right: -10%;
+  top: 0;
+  left: 0;
   pointer-events: none;
   filter: blur(80px);
-  animation: floatLightSecondary 20s infinite alternate ease-in-out;
-  transition: var(--transition-smooth);
-}
-
-@keyframes floatLight {
-  0% { transform: translate(0, 0) scale(1); }
-  100% { transform: translate(150px, 80px) scale(1.2); }
-}
-
-@keyframes floatLightSecondary {
-  0% { transform: translate(0, 0) scale(1.1); }
-  100% { transform: translate(-100px, -120px) scale(0.9); }
+  transform: translate(calc(100vw - var(--mouse-x, 50vw) - 300px), calc(100vh - var(--mouse-y, 50vh) - 300px));
+  transition: transform 1.8s cubic-bezier(0.2, 0.8, 0.2, 1), var(--transition-smooth);
+  mix-blend-mode: screen;
+  z-index: 0;
 }

@@ -1,0 +1,239 @@
+.splash-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  background-color: rgba(8, 8, 14, 0.4);
+  backdrop-filter: blur(50px);
+  -webkit-backdrop-filter: blur(50px);
+  transition: background-color 1.5s cubic-bezier(0.8, 0, 0.2, 1), backdrop-filter 1.5s cubic-bezier(0.8, 0, 0.2, 1);
+}
+
+.splash-half {
+  position: absolute;
+  width: 100vw;
+  left: 0;
+  display: flex;
+  justify-content: center;
+  z-index: 10;
+  transition: transform 1.5s cubic-bezier(0.8, 0, 0.2, 1);
+  overflow: hidden;
+  background-color: transparent;
+}
+
+.splash-top {
+  height: 40vh;
+  top: 0;
+  align-items: flex-end;
+  padding-bottom: 2rem;
+  position: relative; /* For corner accents */
+}
+
+.splash-bottom {
+  height: 60vh;
+  bottom: 0;
+  align-items: flex-start;
+  padding-top: 3rem;
+  position: relative; /* For corner accents */
+}
+
+/* Elegant gallery corners */
+.splash-top::before, .splash-top::after {
+  content: '';
+  position: absolute;
+  top: 60px;
+  width: 50px;
+  height: 50px;
+  border-top: 1px solid rgba(255, 255, 255, 0.3);
+  pointer-events: none;
+}
+.splash-top::before {
+  left: 60px;
+  border-left: 1px solid rgba(255, 255, 255, 0.3);
+}
+.splash-top::after {
+  right: 60px;
+  border-right: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.splash-bottom::before, .splash-bottom::after {
+  content: '';
+  position: absolute;
+  bottom: 60px;
+  width: 50px;
+  height: 50px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+  pointer-events: none;
+}
+.splash-bottom::before {
+  left: 60px;
+  border-left: 1px solid rgba(255, 255, 255, 0.3);
+}
+.splash-bottom::after {
+  right: 60px;
+  border-right: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+/* Subtle texture on the whole overlay */
+.splash-overlay::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  opacity: 0.03;
+  pointer-events: none;
+  z-index: 1;
+  transition: opacity 1.5s ease;
+}
+
+/* Animating out: Top goes up, Bottom goes down, Glass fades away */
+.splash-overlay.animating-out {
+  background-color: transparent;
+  backdrop-filter: blur(0px);
+  -webkit-backdrop-filter: blur(0px);
+}
+.splash-overlay.animating-out::after {
+  opacity: 0;
+}
+
+.splash-overlay.animating-out .splash-top {
+  transform: translateY(-100%);
+}
+
+.splash-overlay.animating-out .splash-bottom {
+  transform: translateY(100%);
+}
+
+/* Add a bright slit light effect when they start separating */
+.splash-overlay.animating-out::before {
+  content: '';
+  position: absolute;
+  top: 40%;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: #a78bfa;
+  box-shadow: 0 0 20px 5px rgba(167, 139, 250, 0.8), 0 0 40px 10px rgba(167, 139, 250, 0.4);
+  transform: translateY(-50%);
+  animation: flashSlit 1.5s cubic-bezier(0.77, 0, 0.175, 1) forwards;
+  z-index: 10000;
+  pointer-events: none;
+}
+
+@keyframes flashSlit {
+  0% { opacity: 0; transform: translateY(-50%) scaleX(0); }
+  20% { opacity: 1; transform: translateY(-50%) scaleX(1); }
+  100% { opacity: 0; transform: translateY(-50%) scaleX(1) scaleY(50); }
+}
+
+/* Top Content */
+.splash-content-top {
+  /* removed translateY */
+}
+
+.splash-title {
+  font-family: 'Marck Script', cursive;
+  font-size: 6rem;
+  color: #f3f4f6;
+  font-weight: 400;
+  letter-spacing: 2px;
+  text-shadow: 0 4px 20px rgba(167, 139, 250, 0.4);
+  margin: 0;
+}
+
+/* Bottom Content */
+.splash-content-bottom {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 2.5rem;
+  max-width: 900px;
+  padding: 0 2rem;
+}
+
+.splash-photo-rect {
+  height: 220px;
+  width: auto;
+  border-radius: 6px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.6), 0 0 40px rgba(167, 139, 250, 0.15);
+  border: 1px solid rgba(255,255,255,0.1);
+  padding: 0;
+  background-color: transparent;
+}
+
+.splash-text-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.splash-subtitle {
+  font-family: var(--font-sans);
+  font-size: 1.1rem;
+  color: var(--color-text-muted);
+  font-weight: 400;
+  text-align: left;
+  margin: 0 0 1rem 0;
+  line-height: 1.4;
+  letter-spacing: 4px;
+}
+
+.splash-name-highlight {
+  font-family: var(--font-display);
+  font-size: 2.8rem;
+  color: #ffffff;
+  font-weight: 700;
+  letter-spacing: 3px;
+  display: block;
+  margin-top: 5px;
+  text-shadow: 0 2px 15px rgba(167, 139, 250, 0.3);
+}
+
+.splash-hint {
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.4); /* Grayer / softer */
+  margin-bottom: 2rem;
+  font-weight: 300;
+}
+
+.splash-buttons {
+  display: flex;
+  gap: 1.5rem; /* slightly more gap */
+}
+
+.splash-btn {
+  background: transparent;
+  padding: 12px 24px;
+  border-radius: 4px;
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(5px);
+}
+
+.splash-btn.primary {
+  background: rgba(167, 139, 250, 0.15);
+  border: 1px solid rgba(167, 139, 250, 0.8); /* more visible frame */
+  color: var(--color-text-main);
+}
+
+.splash-btn.primary:hover {
+  background: rgba(167, 139, 250, 0.3);
+  box-shadow: 0 0 20px rgba(167, 139, 250, 0.4);
+}
+
+.splash-btn.secondary {
+  border: 1px solid rgba(255, 255, 255, 0.4); /* more visible frame */
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.splash-btn.secondary:hover {
+  border-color: rgba(255,255,255,0.5);
+  color: white;
+}
