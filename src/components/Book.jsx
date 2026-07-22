@@ -4,6 +4,8 @@ import ScratchGame from './ScratchGame';
 import PolaroidGame from './PolaroidGame';
 import './Book.css';
 
+const ENABLE_PHOTO_FLIP = false;
+
 export default function Book() {
   const [drawings, setDrawings] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0); // Index of the active spread/drawing
@@ -15,13 +17,22 @@ export default function Book() {
     isDragging: false,
     angle: 0,
     direction: null,
-    isReleasing: false
+    isReleasing: false,
+    releaseDuration: 800
   });
   
   // Autoplay
   const [isPlaying, setIsPlaying] = useState(false);
   const [playInterval, setPlayInterval] = useState(15000); // 15 seconds by default
-  const dragRef = useRef({ startX: 0, R: 0, centerX: 0 });
+  const dragRef = useRef({
+    startX: 0,
+    R: 0,
+    centerX: 0,
+    samples: [],
+    rafId: null,
+    pendingAngle: null,
+    pendingDirection: null
+  });
   const bgRef = useRef({
     start: [5, 5, 8],
     end: [10, 10, 15]
@@ -33,10 +44,23 @@ export default function Book() {
   const canvasRef = useRef(null);
   const bookRef = useRef(null);
   const particlesRef = useRef(null);
-  const mouseRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+  const mouseRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2, vx: 0, vy: 0, isDown: false, canPaint: false });
+  const eraRef = useRef({
+    era: 'constellation',
+    primaryRgb: [45, 212, 191],
+    bgStart: [5, 5, 8],
+    bgEnd: [10, 10, 15],
+    pageStamp: -1
+  });
+  const [photoFlipped, setPhotoFlipped] = useState(false);
 
   // Fetch drawings list
   const isCoverClosed = currentIndex === 0 && !isFlipping && !dragState.isDragging && !dragState.isReleasing;
+
+  // Theme switches at flip start so colors morph while the page is in flight
+  let themeIndex = currentIndex;
+  if (isFlipping && flipDirection === 'next') themeIndex = Math.min(currentIndex + 1, drawings.length - 1);
+  else if (isFlipping && flipDirection === 'prev') themeIndex = Math.max(currentIndex - 1, 0);
 
   useEffect(() => {
     fetch(`${import.meta.env.BASE_URL}album.json`)
@@ -67,47 +91,129 @@ export default function Book() {
     return result ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)] : [0,0,0];
   };
 
+  // Era theme target for the persistent background loop (no loop restart on page change)
+  useEffect(() => {
+    if (drawings.length === 0 || !drawings[themeIndex]) return;
+    const activeDrawing = drawings[themeIndex];
+    let refDrawing = activeDrawing;
+    if (!refDrawing.year) {
+      for (let i = themeIndex + 1; i < drawings.length; i++) {
+        if (drawings[i]?.year) {
+          refDrawing = drawings[i];
+          break;
+        }
+      }
+    }
+    const chapterEraMap = {
+      'Генезис': 'constellation',
+      'Мрак и Поиск': 'fog',
+      'Ренессанс': 'ink',
+      'Современность': 'orbit',
+      'За гранью': 'watercolor'
+    };
+
+    let era = chapterEraMap[refDrawing?.chapterTitle] || chapterEraMap[activeDrawing?.chapterTitle];
+    if (!era) {
+      const currentYear = parseInt(refDrawing?.year || 2016);
+      era = 'watercolor';
+      if (currentYear <= 2018) era = 'constellation';
+      else if (currentYear <= 2020) era = 'fog';
+      else if (currentYear <= 2022) era = 'sparks';
+      else if (currentYear <= 2024) era = 'orbit';
+    }
+
+    const theme = activeDrawing?.eraTheme || {};
+    const bgStartHex = theme.bgStart || (theme.bg && theme.bg[0]) || '#050508';
+    const bgEndHex = theme.bgEnd || (theme.bg && theme.bg[1]) || '#0a0a0f';
+    eraRef.current = {
+      era,
+      primaryRgb: hexToRgb(theme.primary || '#2dd4bf'),
+      bgStart: hexToRgb(bgStartHex),
+      bgEnd: hexToRgb(bgEndHex),
+      pageStamp: themeIndex
+    };
+  }, [themeIndex, drawings]);
+
+  // Preload and decode neighbor images so flips do not jank on synchronous decode
+  useEffect(() => {
+    if (drawings.length === 0) return;
+    [currentIndex + 1, currentIndex + 2, currentIndex - 1].forEach((i) => {
+      const d = drawings[i];
+      if (d && d.image) {
+        const img = new Image();
+        img.src = `${import.meta.env.BASE_URL}${d.image}`;
+        if (img.decode) img.decode().catch(() => {});
+      }
+    });
+  }, [currentIndex, drawings]);
+
   // Background particle animation system (Dynamic Eras)
   useEffect(() => {
     if (loading || drawings.length === 0) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
-    
+
     let animationId;
     let width = window.innerWidth;
     let height = window.innerHeight;
     if (canvas.width !== width) canvas.width = width;
     if (canvas.height !== height) canvas.height = height;
 
+    // Half-resolution ink layer for the Renaissance drawing effect
+    const paintCanvas = document.createElement('canvas');
+    paintCanvas.width = Math.max(1, Math.ceil(width / 2));
+    paintCanvas.height = Math.max(1, Math.ceil(height / 2));
+    const paintCtx = paintCanvas.getContext('2d');
+    const paintState = { lastX: null, lastY: null, nextDropAt: 0, frame: 0 };
+
     const handleResize = () => {
       width = window.innerWidth;
       height = window.innerHeight;
       if (canvas.width !== width) canvas.width = width;
       if (canvas.height !== height) canvas.height = height;
+      const pw = Math.max(1, Math.ceil(width / 2));
+      const ph = Math.max(1, Math.ceil(height / 2));
+      if (paintCanvas.width !== pw || paintCanvas.height !== ph) {
+        const snapshot = document.createElement('canvas');
+        snapshot.width = paintCanvas.width;
+        snapshot.height = paintCanvas.height;
+        snapshot.getContext('2d').drawImage(paintCanvas, 0, 0);
+        paintCanvas.width = pw;
+        paintCanvas.height = ph;
+        paintCtx.drawImage(snapshot, 0, 0, pw, ph);
+      }
     };
     
     const handlePointerMove = (e) => {
-      mouseRef.current.x = e.clientX;
-      mouseRef.current.y = e.clientY;
+      const m = mouseRef.current;
+      m.vx = e.clientX - m.x;
+      m.vy = e.clientY - m.y;
+      m.x = e.clientX;
+      m.y = e.clientY;
       // Update global CSS variables for ambient lights in index.css
       document.documentElement.style.setProperty('--mouse-x', `${e.clientX}px`);
       document.documentElement.style.setProperty('--mouse-y', `${e.clientY}px`);
     };
 
+    const handleGlobalPointerDown = (e) => {
+      mouseRef.current.isDown = true;
+      mouseRef.current.canPaint = !(e.target && e.target.closest && e.target.closest('.book, .controls-panel, .side-nav-container, .book-bookmarks, .album-header'));
+    };
+    const handleGlobalPointerUp = () => {
+      mouseRef.current.isDown = false;
+    };
+
     window.addEventListener('resize', handleResize);
     window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerdown', handleGlobalPointerDown);
+    window.addEventListener('pointerup', handleGlobalPointerUp);
+    window.addEventListener('pointercancel', handleGlobalPointerUp);
 
-    const activeDrawing = drawings[currentIndex];
-    const currentYear = parseInt(activeDrawing?.year || 2016);
-    const primaryColorHex = activeDrawing?.eraTheme?.primary || '#2dd4bf';
-    const primaryColorRgb = hexToRgb(primaryColorHex);
-    
-    let era = 'watercolor';
-    if (currentYear <= 2018) era = 'constellation';
-    else if (currentYear <= 2020) era = 'fog';
-    else if (currentYear <= 2022) era = 'sparks';
-    else if (currentYear <= 2024) era = 'orbit';
+    let fastClear = 0;
+    let prevStamp = eraRef.current.pageStamp;
+    let nextShootAt = 0;
+    let nextEmberAt = 0;
 
     // Initialize unified particles on mount or if physics state is missing
     if (!particlesRef.current || !particlesRef.current.particles || !particlesRef.current.physics) {
@@ -167,15 +273,14 @@ export default function Book() {
         ];
       };
 
-      // 1. Update Background Gradient
-      const targetBgHex = activeDrawing?.eraTheme?.bg || ['#050508', '#0a0a0f'];
-      const targetStart = hexToRgb(targetBgHex[0]);
-      const targetEnd = hexToRgb(targetBgHex[1] || targetBgHex[0]);
-      
+      // 1. Update Background Gradient from the persistent era target
+      const { era, primaryRgb, bgStart: targetStart, bgEnd: targetEnd } = eraRef.current;
+
       bgRef.current.start = lerpColor(bgRef.current.start, targetStart);
       bgRef.current.end = lerpColor(bgRef.current.end, targetEnd);
 
       ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
       const bgGrad = ctx.createLinearGradient(0, 0, 0, height);
       bgGrad.addColorStop(0, `rgb(${Math.round(bgRef.current.start[0])}, ${Math.round(bgRef.current.start[1])}, ${Math.round(bgRef.current.start[2])})`);
       bgGrad.addColorStop(1, `rgb(${Math.round(bgRef.current.end[0])}, ${Math.round(bgRef.current.end[1])}, ${Math.round(bgRef.current.end[2])})`);
@@ -183,16 +288,15 @@ export default function Book() {
       ctx.fillRect(0, 0, width, height);
 
       // 2. Determine Target Physics for current Era
-      const targetPhysics = {
-        upwardForce: era === 'sparks' ? 1.5 : era === 'fog' ? 0.3 : era === 'watercolor' ? 0.02 : 0,
-        centerGravity: era === 'orbit' ? 0.005 : 0,
-        orbitSpeed: era === 'orbit' ? 0.003 : 0,
-        randomJitter: era === 'sparks' ? 0.8 : era === 'watercolor' ? 0.05 : era === 'orbit' ? 0.02 : 0.2,
-        targetSize: era === 'watercolor' ? 40 : era === 'fog' ? 25 : era === 'orbit' ? 3 : era === 'constellation' ? 2 : 1.5,
-        lineOpacity: era === 'constellation' ? 0.4 : 0,
-        glowMultiplier: (era === 'fog' || era === 'watercolor') ? 2 : 4,
-        friction: era === 'orbit' ? 0.99 : 0.93,
+      const physicsByEra = {
+        constellation: { upwardForce: 0, centerGravity: 0, orbitSpeed: 0, randomJitter: 0.15, targetSize: 2, lineOpacity: 0.4, glowMultiplier: 4, friction: 0.93 },
+        fog: { upwardForce: 0.3, centerGravity: 0, orbitSpeed: 0, randomJitter: 0.15, targetSize: 28, lineOpacity: 0, glowMultiplier: 2, friction: 0.93 },
+        sparks: { upwardForce: 1.5, centerGravity: 0, orbitSpeed: 0, randomJitter: 0.8, targetSize: 1.5, lineOpacity: 0, glowMultiplier: 4, friction: 0.93 },
+        ink: { upwardForce: 0, centerGravity: 0, orbitSpeed: 0, randomJitter: 0.05, targetSize: 2, lineOpacity: 0, glowMultiplier: 3, friction: 0.95 },
+        orbit: { upwardForce: 0, centerGravity: 0.005, orbitSpeed: 0.003, randomJitter: 0.02, targetSize: 3, lineOpacity: 0, glowMultiplier: 4, friction: 0.99 },
+        watercolor: { upwardForce: 0.02, centerGravity: 0, orbitSpeed: 0, randomJitter: 0.05, targetSize: 40, lineOpacity: 0, glowMultiplier: 2, friction: 0.93 }
       };
+      const targetPhysics = physicsByEra[era] || physicsByEra.constellation;
 
       // 3. Smoothly Interpolate Global Physics State
       const pState = particlesRef.current.physics;
@@ -211,14 +315,142 @@ export default function Book() {
       pState.glowMultiplier += (targetPhysics.glowMultiplier - pState.glowMultiplier) * lerpSpeed;
       pState.friction += (targetPhysics.friction - pState.friction) * lerpSpeed;
       
-      pState.primaryColor = lerpColor(pState.primaryColor, primaryColorRgb, lerpSpeed);
+      pState.primaryColor = lerpColor(pState.primaryColor, primaryRgb, lerpSpeed);
       const pColorRgba = `rgba(${Math.round(pState.primaryColor[0])}, ${Math.round(pState.primaryColor[1])}, ${Math.round(pState.primaryColor[2])}`;
 
+      // Renaissance canvas: paint while the pointer is pressed, ink bleeds and dissolves
+      paintState.frame++;
+      const tNow = performance.now();
+      const inkR = Math.round(pState.primaryColor[0]);
+      const inkG = Math.round(pState.primaryColor[1]);
+      const inkB = Math.round(pState.primaryColor[2]);
+      if (era === 'ink' && mouseRef.current.isDown && mouseRef.current.canPaint) {
+        const px = mouseRef.current.x / 2;
+        const py = mouseRef.current.y / 2;
+        if (paintState.lastX === null) {
+          const pressGrad = paintCtx.createRadialGradient(px, py, 0, px, py, 6);
+          pressGrad.addColorStop(0, `rgba(${inkR}, ${inkG}, ${inkB}, 0.45)`);
+          pressGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+          paintCtx.fillStyle = pressGrad;
+          paintCtx.beginPath();
+          paintCtx.arc(px, py, 6, 0, Math.PI * 2);
+          paintCtx.fill();
+        } else {
+          const moved = Math.hypot(px - paintState.lastX, py - paintState.lastY);
+          if (moved < 200) {
+            paintCtx.strokeStyle = `rgba(${inkR}, ${inkG}, ${inkB}, 0.38)`;
+            paintCtx.lineWidth = Math.min(16, 4 + moved * 0.35);
+            paintCtx.lineCap = 'round';
+            paintCtx.lineJoin = 'round';
+            paintCtx.beginPath();
+            paintCtx.moveTo(paintState.lastX, paintState.lastY);
+            paintCtx.lineTo(px, py);
+            paintCtx.stroke();
+          }
+        }
+        paintState.lastX = px;
+        paintState.lastY = py;
+      } else {
+        paintState.lastX = null;
+        paintState.lastY = null;
+      }
+
+      if (era === 'ink' && tNow > paintState.nextDropAt) {
+        paintState.nextDropAt = tNow + 4000 + Math.random() * 5000;
+        const dropX = Math.random() * paintCanvas.width;
+        const dropY = Math.random() * paintCanvas.height;
+        const dropR = 5 + Math.random() * 12;
+        const dropGrad = paintCtx.createRadialGradient(dropX, dropY, 0, dropX, dropY, dropR);
+        dropGrad.addColorStop(0, `rgba(${inkR}, ${inkG}, ${inkB}, 0.35)`);
+        dropGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        paintCtx.fillStyle = dropGrad;
+        paintCtx.beginPath();
+        paintCtx.arc(dropX, dropY, dropR, 0, Math.PI * 2);
+        paintCtx.fill();
+      }
+
+      if (eraRef.current.pageStamp !== prevStamp) {
+        prevStamp = eraRef.current.pageStamp;
+        if (paintState.frame > 1) fastClear = 70;
+      }
+
+      if (fastClear > 0) {
+        fastClear--;
+        if (fastClear === 0) {
+          paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+        } else {
+          paintCtx.save();
+          paintCtx.globalCompositeOperation = 'copy';
+          paintCtx.filter = 'blur(2px)';
+          paintCtx.globalAlpha = 0.86;
+          paintCtx.drawImage(paintCanvas, 0, 0);
+          paintCtx.restore();
+          paintCtx.filter = 'none';
+          paintCtx.save();
+          paintCtx.globalCompositeOperation = 'destination-out';
+          paintCtx.globalAlpha = 0.08;
+          paintCtx.fillStyle = '#000';
+          paintCtx.fillRect(0, 0, paintCanvas.width, paintCanvas.height);
+          paintCtx.restore();
+        }
+      } else if (paintState.frame % 3 === 0) {
+        paintCtx.save();
+        paintCtx.globalCompositeOperation = 'copy';
+        paintCtx.filter = 'blur(1px)';
+        paintCtx.globalAlpha = 0.992;
+        paintCtx.drawImage(paintCanvas, 0, 0);
+        paintCtx.restore();
+        paintCtx.filter = 'none';
+        paintCtx.save();
+        paintCtx.globalCompositeOperation = 'destination-out';
+        paintCtx.globalAlpha = 0.012;
+        paintCtx.fillStyle = '#000';
+        paintCtx.fillRect(0, 0, paintCanvas.width, paintCanvas.height);
+        paintCtx.restore();
+      }
+
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      ctx.globalAlpha = 0.85;
+      ctx.drawImage(paintCanvas, 0, 0, width, height);
+      ctx.restore();
+
       ctx.globalCompositeOperation = (era === 'fog' || era === 'watercolor') ? 'source-over' : 'screen';
-      
+
       const mouseX = mouseRef.current.x;
       const mouseY = mouseRef.current.y;
       const particles = particlesRef.current.particles;
+
+      // Era ambient events: shooting stars in Genesis, warm embers in the fog
+      if (era === 'constellation' && tNow > nextShootAt) {
+        nextShootAt = tNow + 4000 + Math.random() * 5000;
+        particles.push({
+          x: Math.random() * width * 0.5,
+          y: Math.random() * height * 0.3,
+          vx: 20 + Math.random() * 8,
+          vy: 5 + Math.random() * 3,
+          size: 2,
+          alpha: 1,
+          decay: 0.015,
+          angle: 0,
+          orbitRadius: 0
+        });
+      }
+      if (era === 'fog' && tNow > nextEmberAt) {
+        nextEmberAt = tNow + 2000 + Math.random() * 4000;
+        particles.push({
+          x: Math.random() * width,
+          y: height + 20,
+          vx: (Math.random() - 0.5) * 0.6,
+          vy: -(0.8 + Math.random() * 0.8),
+          size: 2.5,
+          alpha: 0.9,
+          decay: 0.003,
+          warm: true,
+          angle: 0,
+          orbitRadius: 0
+        });
+      }
 
       // 4. Update and Draw Particles
       for (let i = particles.length - 1; i >= 0; i--) {
@@ -232,8 +464,8 @@ export default function Book() {
         // Apply Orbit
         if (pState.centerGravity > 0.0001) {
           p.angle += pState.orbitSpeed;
-          const targetX = width/2 + Math.cos(p.angle) * p.orbitRadius;
-          const targetY = height/2 + Math.sin(p.angle) * p.orbitRadius;
+          const targetX = width/2 + Math.cos(p.angle) * p.orbitRadius * 2.6;
+          const targetY = height/2 + Math.sin(p.angle) * p.orbitRadius * 2.6;
           p.vx += (targetX - p.x) * pState.centerGravity;
           p.vy += (targetY - p.y) * pState.centerGravity;
         }
@@ -268,6 +500,9 @@ export default function Book() {
           const forceM = (150 - distM) / 150;
           p.vx += (dx / distM) * forceM * 2;
           p.vy += (dy / distM) * forceM * 2;
+          // Wake effect: particles are dragged along the cursor movement direction
+          p.vx += mouseRef.current.vx * forceM * 0.06;
+          p.vy += mouseRef.current.vy * forceM * 0.06;
         }
 
         // Apply Velocity & Friction
@@ -300,18 +535,21 @@ export default function Book() {
           console.error("NAN DETECTED!", {x: p.x, y: p.y, size: p.size, glow: pState.glowMultiplier, vx: p.vx, vy: p.vy, pState});
         }
         const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, gradRadius);
-        
-        grad.addColorStop(0, `${pColorRgba}, 1)`);
+
+        const pBase = p.warm ? 'rgba(255, 150, 70' : pColorRgba;
+        grad.addColorStop(0, `${pBase}, 1)`);
         if (era === 'fog' || era === 'watercolor') {
-          grad.addColorStop(0.5, `${pColorRgba}, 0.1)`);
+          grad.addColorStop(0.5, `${pBase}, 0.1)`);
           grad.addColorStop(1, 'transparent');
         } else {
-          grad.addColorStop(0.3, `${pColorRgba}, 0.3)`);
+          grad.addColorStop(0.3, `${pBase}, 0.3)`);
           grad.addColorStop(1, 'transparent');
         }
-        
+
         ctx.fillStyle = grad;
-        const alphaMultiplier = era === 'watercolor' ? 0.3 : 1;
+        const alphaMultiplier = era === 'watercolor' ? 0.3
+          : (era === 'constellation' && !p.decay) ? 0.7 + 0.3 * Math.sin(tNow * 0.002 + i * 1.7)
+          : 1;
         ctx.globalAlpha = Math.max(0, Math.min(1, p.alpha * alphaMultiplier));
         ctx.arc(p.x, p.y, gradRadius, 0, Math.PI * 2);
         ctx.fill();
@@ -335,8 +573,26 @@ export default function Book() {
               ctx.stroke();
             }
           }
+          // Constellation lines also reach toward the cursor
+          const dMx = p.x - mouseX;
+          const dMy = p.y - mouseY;
+          const distSqML = dMx*dMx + dMy*dMy;
+          if (distSqML < 22500) {
+            const distML = Math.sqrt(distSqML);
+            ctx.beginPath();
+            ctx.strokeStyle = `${pColorRgba}, 1)`;
+            ctx.lineWidth = 0.6;
+            ctx.globalAlpha = Math.max(0, Math.min(1, (1 - distML / 150) * pState.lineOpacity * 1.2));
+            ctx.moveTo(p.x, p.y);
+            ctx.lineTo(mouseX, mouseY);
+            ctx.stroke();
+          }
         }
       }
+
+      // Cursor wake decays between frames
+      mouseRef.current.vx *= 0.8;
+      mouseRef.current.vy *= 0.8;
 
       animationId = requestAnimationFrame(animate);
     };
@@ -347,15 +603,18 @@ export default function Book() {
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('click', handleWindowClick);
       window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerdown', handleGlobalPointerDown);
+      window.removeEventListener('pointerup', handleGlobalPointerUp);
+      window.removeEventListener('pointercancel', handleGlobalPointerUp);
       cancelAnimationFrame(animationId);
     };
-  }, [currentIndex, drawings, loading]);
+  }, [loading]);
 
   // Dynamically update document CSS variables when active theme changes
   useEffect(() => {
-    if (drawings.length === 0 || !drawings[currentIndex]) return;
-    
-    const theme = drawings[currentIndex]?.eraTheme || {};
+    if (drawings.length === 0 || !drawings[themeIndex]) return;
+
+    const theme = drawings[themeIndex]?.eraTheme || {};
     const bgStart = theme.bgStart || (theme.bg && theme.bg[0]) || '#0c0d14';
     const bgEnd = theme.bgEnd || (theme.bg && theme.bg[1]) || '#050508';
     const primary = theme.primary || '#2dd4bf';
@@ -371,9 +630,9 @@ export default function Book() {
     root.style.setProperty('--color-primary', primary);
     root.style.setProperty('--color-primary-rgb', primaryRgb);
     root.style.setProperty('--glass-bg', solidBg);
-    
+
     bgRef.current.target = [hexToRgb(bgStart), hexToRgb(bgEnd)];
-  }, [currentIndex, drawings]);
+  }, [themeIndex, drawings]);
 
   // Play recorded mp3 paper sounds in sequence
   const playPaperSound = () => {
@@ -391,6 +650,7 @@ export default function Book() {
     if (isAuto !== true && isPlaying) setIsPlaying(false);
     if (currentIndex < drawings.length - 1 && !isFlipping) {
       playPaperSound();
+      setPhotoFlipped(false);
       setFlipDirection('next');
       setIsFlipping(true);
       setTimeout(() => {
@@ -407,6 +667,7 @@ export default function Book() {
     if (isAuto !== true && isPlaying) setIsPlaying(false);
     if (currentIndex > 0 && !isFlipping) {
       playPaperSound();
+      setPhotoFlipped(false);
       setFlipDirection('prev');
       setIsFlipping(true);
       setTimeout(() => {
@@ -437,53 +698,81 @@ export default function Book() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleNext, handlePrev]);
 
+  const resetDragState = () => {
+    setDragState({ isDragging: false, angle: 0, direction: null, isReleasing: false, releaseDuration: 800 });
+  };
+
   const handlePointerDown = (e) => {
     if (e.button !== 0 && e.pointerType === 'mouse') return;
-    if (isFlipping) return;
-    
-    if (isPlaying) setIsPlaying(false); // Stop autoplay if user touches the book
+    if (isFlipping || dragState.isReleasing) return;
 
-    const clientX = e.clientX !== undefined ? e.clientX : (e.touches && e.touches[0].clientX);
+    if (isPlaying) setIsPlaying(false);
+
+    const clientX = e.clientX;
     if (clientX === undefined) return;
 
-    // Calculate book spine center
     const rect = bookRef.current?.getBoundingClientRect();
     if (!rect) return;
     const centerX = rect.left + rect.width / 2;
     const R = clientX - centerX;
-    
-    // Ignore clicks too close to spine to avoid crazy rotation
-    if (Math.abs(R) < 30) return;
 
-    dragRef.current = { startX: clientX, R, centerX };
-    setDragState({ isDragging: true, angle: 0, direction: null, isReleasing: false });
+    // Возле корешка радиус R крошечный, и вращение (acos от d/R) становится
+    // нестабильным. Такую центральную полосу обрабатываем как клик для
+    // перелистывания, а не как перетаскивание с поворотом страницы.
+    const clickZone = Math.max(45, rect.width * 0.11);
+    const clickOnly = Math.abs(R) < clickZone;
 
-    if (e.target.setPointerCapture) {
-      e.target.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      startX: clientX,
+      R,
+      centerX,
+      clickOnly,
+      samples: [{ x: clientX, t: performance.now() }],
+      rafId: null,
+      pendingAngle: null,
+      pendingDirection: null,
+      onPhoto: !!(e.target.closest && e.target.closest('.photo-wrapper'))
+    };
+    setDragState({ isDragging: true, angle: 0, direction: null, isReleasing: false, releaseDuration: 800 });
+
+    if (e.currentTarget.setPointerCapture && e.pointerId !== undefined) {
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch (err) {
+        console.warn('Pointer capture failed:', err);
+      }
     }
   };
 
   const handlePointerMove = (e) => {
     if (!dragState.isDragging || dragState.isReleasing) return;
+    if (dragRef.current.clickOnly) return;
     const { centerX, R, startX } = dragRef.current;
-    
-    const clientX = e.clientX !== undefined ? e.clientX : (e.touches && e.touches[0].clientX);
+
+    const clientX = e.clientX;
     if (clientX === undefined) return;
 
-    let direction = dragState.direction;
+    const now = performance.now();
+    const samples = dragRef.current.samples;
+    samples.push({ x: clientX, t: now });
+    while (samples.length > 2 && now - samples[0].t > 100) {
+      samples.shift();
+    }
+
+    let direction = dragRef.current.pendingDirection || dragState.direction;
     if (!direction) {
       const deltaX = clientX - startX;
-      if (Math.abs(deltaX) > 10) {
-        if (R > 0 && deltaX > 0) return; // Prevent dragging right page to the right
-        if (R < 0 && deltaX < 0) return; // Prevent dragging left page to the left
-        
+      if (Math.abs(deltaX) > 8) {
+        if (R > 0 && deltaX > 0) return;
+        if (R < 0 && deltaX < 0) return;
+
         direction = R > 0 ? 'next' : 'prev';
         if (direction === 'next' && currentIndex >= drawings.length - 1) {
-          setDragState({ isDragging: false, angle: 0, direction: null, isReleasing: false });
+          resetDragState();
           return;
         }
         if (direction === 'prev' && currentIndex === 0) {
-          setDragState({ isDragging: false, angle: 0, direction: null, isReleasing: false });
+          resetDragState();
           return;
         }
       } else {
@@ -491,37 +780,50 @@ export default function Book() {
       }
     }
 
-    const totalDist = 2 * Math.abs(R);
-    let progress = 0;
-    
-    if (direction === 'next') {
-      progress = (startX - clientX) / totalDist;
-    } else if (direction === 'prev') {
-      progress = (clientX - startX) / totalDist;
-    }
-    
-    progress = Math.max(0, Math.min(1, progress));
-    
-    let angle = 0;
-    if (direction === 'next') {
-      angle = -progress * 180;
-    } else if (direction === 'prev' && currentIndex > 0) {
-      angle = progress * 180;
-    }
+    const d = clientX - centerX;
+    const ratio = Math.max(-1, Math.min(1, d / R));
+    const naturalAngle = Math.acos(ratio) * (180 / Math.PI);
+    const angle = direction === 'next' ? -naturalAngle : naturalAngle;
 
-    setDragState(prev => ({ ...prev, direction, angle }));
+    dragRef.current.pendingAngle = angle;
+    dragRef.current.pendingDirection = direction;
+
+    if (dragRef.current.rafId === null) {
+      dragRef.current.rafId = requestAnimationFrame(() => {
+        dragRef.current.rafId = null;
+        setDragState(prev => {
+          if (!prev.isDragging || prev.isReleasing) return prev;
+          return {
+            ...prev,
+            direction: dragRef.current.pendingDirection,
+            angle: dragRef.current.pendingAngle
+          };
+        });
+      });
+    }
   };
 
   const handlePointerUp = (e) => {
     if (!dragState.isDragging || dragState.isReleasing) return;
-    
-    const clientX = e.clientX || (e.changedTouches && e.changedTouches[0].clientX) || dragRef.current.startX;
 
-    const { direction, angle } = dragState;
+    if (dragRef.current.rafId !== null) {
+      cancelAnimationFrame(dragRef.current.rafId);
+      dragRef.current.rafId = null;
+    }
+
+    if (e.currentTarget.hasPointerCapture && e.pointerId !== undefined && e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+
+    const clientX = e.clientX !== undefined ? e.clientX : dragRef.current.startX;
+    const direction = dragRef.current.pendingDirection || dragState.direction;
+    const angle = dragRef.current.pendingAngle !== null ? dragRef.current.pendingAngle : dragState.angle;
+
     if (!direction) {
-      setDragState({ isDragging: false, angle: 0, direction: null, isReleasing: false });
-      const { centerX } = dragRef.current;
-      if (clientX > centerX) {
+      resetDragState();
+      if (ENABLE_PHOTO_FLIP && dragRef.current.onPhoto) {
+        setPhotoFlipped(prev => !prev);
+      } else if (clientX > dragRef.current.centerX) {
         handleNext();
       } else {
         handlePrev();
@@ -529,41 +831,73 @@ export default function Book() {
       return;
     }
 
-    setDragState(prev => ({ ...prev, isReleasing: true }));
-    if (e.target.releasePointerCapture) {
-      e.target.releasePointerCapture(e.pointerId);
+    const samples = dragRef.current.samples;
+    let velocity = 0;
+    if (samples.length >= 2) {
+      const first = samples[0];
+      const last = samples[samples.length - 1];
+      const dt = last.t - first.t;
+      if (dt > 0) velocity = (last.x - first.x) / dt;
     }
-    
+
+    const flickThreshold = 0.4;
+    let complete;
     if (direction === 'next') {
-      if (angle <= -90) {
-        setDragState(prev => ({ ...prev, angle: -180 }));
-        playPaperSound();
-        setTimeout(() => {
-          setCurrentIndex(prev => Math.min(prev + 1, drawings.length - 1));
-          setDragState({ isDragging: false, angle: 0, direction: null, isReleasing: false });
-        }, 800);
-      } else {
-        setDragState(prev => ({ ...prev, angle: 0 }));
-        setTimeout(() => {
-          setDragState({ isDragging: false, angle: 0, direction: null, isReleasing: false });
-        }, 800);
-      }
+      if (velocity <= -flickThreshold) complete = true;
+      else if (velocity >= flickThreshold) complete = false;
+      else complete = angle <= -90;
     } else {
-      // Prev drag goes from 0 towards 180
-      if (angle >= 90) {
-        setDragState(prev => ({ ...prev, angle: 180 }));
-        playPaperSound();
-        setTimeout(() => {
-          setCurrentIndex(prev => Math.max(prev - 1, 0));
-          setDragState({ isDragging: false, angle: 0, direction: null, isReleasing: false });
-        }, 800);
-      } else {
-        setDragState(prev => ({ ...prev, angle: 0 }));
-        setTimeout(() => {
-          setDragState({ isDragging: false, angle: 0, direction: null, isReleasing: false });
-        }, 800);
-      }
+      if (velocity >= flickThreshold) complete = true;
+      else if (velocity <= -flickThreshold) complete = false;
+      else complete = angle >= 90;
     }
+
+    const currentAbs = Math.abs(angle);
+    const remaining = complete ? 180 - currentAbs : currentAbs;
+    const duration = Math.round(Math.max(250, Math.min(700, remaining * 5)));
+    const targetAngle = complete ? (direction === 'next' ? -180 : 180) : 0;
+
+    setDragState(prev => ({
+      ...prev,
+      direction,
+      isReleasing: true,
+      releaseDuration: duration,
+      angle: targetAngle
+    }));
+
+    if (complete) playPaperSound();
+
+    setTimeout(() => {
+      if (complete) {
+        setPhotoFlipped(false);
+        if (direction === 'next') {
+          setCurrentIndex(prev => Math.min(prev + 1, drawings.length - 1));
+        } else {
+          setCurrentIndex(prev => Math.max(prev - 1, 0));
+        }
+      }
+      resetDragState();
+    }, duration);
+  };
+
+  const handlePointerCancel = () => {
+    if (!dragState.isDragging || dragState.isReleasing) return;
+
+    if (dragRef.current.rafId !== null) {
+      cancelAnimationFrame(dragRef.current.rafId);
+      dragRef.current.rafId = null;
+    }
+
+    const direction = dragRef.current.pendingDirection || dragState.direction;
+    if (!direction) {
+      resetDragState();
+      return;
+    }
+
+    setDragState(prev => ({ ...prev, direction, isReleasing: true, releaseDuration: 300, angle: 0 }));
+    setTimeout(() => {
+      resetDragState();
+    }, 300);
   };
 
   if (loading) {
@@ -604,61 +938,88 @@ export default function Book() {
     }
   });
 
+  // Per-page theme variables: every page carries the colors of its own chapter,
+  // so the landing page is already painted correctly during the flight
+  const themeVarsFor = (drawing) => {
+    const theme = drawing?.eraTheme || {};
+    const bgStart = theme.bgStart || (theme.bg && theme.bg[0]) || '#0c0d14';
+    const primary = theme.primary || '#2dd4bf';
+    const primaryRgb = theme.primaryRgb || '45, 212, 191';
+    const glass = theme.glass || 'rgba(17, 19, 31, 0.65)';
+    const solidBg = glass.replace(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*[\d.]+\)/, 'rgb($1, $2, $3)');
+    return {
+      '--color-primary': primary,
+      '--color-primary-rgb': primaryRgb,
+      '--bg-gradient-start': bgStart,
+      '--glass-bg': solidBg
+    };
+  };
+
   const renderLeftFace = (drawing, isBack = false) => {
     if (!drawing) return null;
     const faceClass = isBack ? 'back' : 'front';
-    
+
     if (drawing.isCover) {
       return null;
     }
 
     if (drawing.type === 'chapter') {
       return (
-        <div className={`page-face ${faceClass} chapter-page-left`}>
-          <div className="chapter-overlay"></div>
-          <h2>{drawing.title}</h2>
+        <div className={`page-face ${faceClass} chapter-page-left`} style={themeVarsFor(drawing)}>
+          <div className="chapter-overlay" key="chapter-overlay"></div>
+          <h2 key="chapter-title">{drawing.title}</h2>
         </div>
       );
     }
     // Mini-games placeholders
     if (drawing.type === 'scratch') {
       return (
-        <div className="page-face image-page" style={{padding: 0}}>
+        <div className="page-face image-page" style={{ ...themeVarsFor(drawing), padding: 0 }}>
           <ScratchGame imageSrc={drawing.image} />
         </div>
       );
     }
     if (drawing.type === 'polaroids') {
       return (
-        <div className="page-face image-page" style={{padding: 0}}>
+        <div className="page-face image-page" style={{ ...themeVarsFor(drawing), padding: 0 }}>
           <PolaroidGame />
         </div>
       );
     }
     // Normal Image Page
+    const isFlippedPhoto = photoFlipped && drawings[currentIndex] && drawing.id === drawings[currentIndex].id;
     return (
-      <div className={`page-face ${faceClass} image-page`}>
-        <div className="photo-wrapper">
+      <div className={`page-face ${faceClass} image-page`} style={themeVarsFor(drawing)}>
+        <div className={`photo-wrapper ${ENABLE_PHOTO_FLIP ? 'flippable' : ''}`} key="photo-wrapper">
           <div className="photo-corner tl"></div>
           <div className="photo-corner tr"></div>
           <div className="photo-corner bl"></div>
           <div className="photo-corner br"></div>
-          <img 
-            src={`${import.meta.env.BASE_URL}${drawing.image}`} 
-            alt={drawing.title} 
-            className="drawing-image" 
-            draggable={false}
-            onLoad={(e) => {
-              const wrapper = e.target.closest('.photo-wrapper');
-              if (wrapper && e.target.naturalWidth && e.target.naturalHeight) {
-                wrapper.style.aspectRatio = `${e.target.naturalWidth} / ${e.target.naturalHeight}`;
-              }
-            }}
-            onError={(e) => {
-              e.target.src = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%25%22 height=%22100%25%22><rect width=%22100%25%22 height=%22100%25%22 fill=%22%23111%22/><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 fill=%22%23555%22 font-family=%22sans-serif%22>Ошибка загрузки...</text></svg>';
-            }}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', userSelect: 'none', display: 'block' }}
-          />
+          <div className={`photo-flipper ${isFlippedPhoto ? 'flipped' : ''}`}>
+            <img
+              src={`${import.meta.env.BASE_URL}${drawing.image}`}
+              alt={drawing.title}
+              className="drawing-image"
+              draggable={false}
+              onLoad={(e) => {
+                const wrapper = e.target.closest('.photo-wrapper');
+                if (wrapper && e.target.naturalWidth && e.target.naturalHeight) {
+                  wrapper.style.aspectRatio = `${e.target.naturalWidth} / ${e.target.naturalHeight}`;
+                }
+              }}
+              onError={(e) => {
+                e.target.src = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%25%22 height=%22100%25%22><rect width=%22100%25%22 height=%22100%25%22 fill=%22%23111%22/><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 fill=%22%23555%22 font-family=%22sans-serif%22>Ошибка загрузки...</text></svg>';
+              }}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', userSelect: 'none', display: 'block' }}
+            />
+            <div className="photo-back-side">
+              <div className="photo-note">
+                <span className="photo-note-year">{drawing.year}</span>
+                <h3>{drawing.title}</h3>
+                <p>{(drawing.story || drawing.description || '').replace(/\.\s*$/, '')}</p>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -670,8 +1031,9 @@ export default function Book() {
 
     if (drawing.isCover) {
       return (
-        <div 
-          className={`page-face ${faceClass} book-cover`} 
+        <div
+          className={`page-face ${faceClass} book-cover`}
+          style={themeVarsFor(drawing)}
           onClick={() => { if (currentIndex === 0) handleNext(); }}
         >
           <div className="cover-content">
@@ -685,29 +1047,32 @@ export default function Book() {
 
     if (drawing.type === 'chapter') {
       return (
-        <div className={`page-face ${faceClass} chapter-page-right`}>
-          <div className="chapter-overlay"></div>
-          <p className="chapter-subtitle">{drawing.description}</p>
+        <div className={`page-face ${faceClass} chapter-page-right`} style={themeVarsFor(drawing)}>
+          <div className="chapter-overlay" key="chapter-overlay"></div>
+          <p className="chapter-subtitle" key="chapter-subtitle">{drawing.description}</p>
         </div>
       );
     }
     // Mini-games placeholders right side
     if (drawing.type === 'scratch' || drawing.type === 'polaroids') {
       return (
-        <div className={`page-face ${faceClass} content-page`} style={{justifyContent: 'center', alignItems: 'center'}}>
+        <div className={`page-face ${faceClass} content-page`} style={{ ...themeVarsFor(drawing), justifyContent: 'center', alignItems: 'center' }}>
            <p className="page-description" style={{textAlign: 'center'}}>{drawing.description}</p>
         </div>
       );
     }
     // Normal Content Page
     return (
-      <div className={`page-face ${faceClass} content-page`}>
+      <div className={`page-face ${faceClass} content-page`} style={themeVarsFor(drawing)}>
         <div className="page-header">
           <h2>{drawing.title}</h2>
+          {(drawing.date || drawing.year) && (
+            <p className="page-year">{drawing.date || `${drawing.year} год`}</p>
+          )}
         </div>
         <div className="page-body">
           <p className="page-description">{drawing.description}</p>
-          {drawing.story && <p className="page-story">{drawing.story}</p>}
+          {drawing.story && <p className="page-story">{drawing.story.replace(/\.\s*$/, '')}</p>}
         </div>
       </div>
     );
@@ -743,6 +1108,7 @@ export default function Book() {
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerCancel}
           style={{ touchAction: 'none' }}
         >
           
@@ -764,17 +1130,19 @@ export default function Book() {
 
           {/* Dynamic Drag/Flipping Page (Next) */}
           {(showNextDrag || (isFlipping && flipDirection === 'next')) && nextDrawing && (
-            <div 
-              className="page right-page" 
+            <div
+              className={`page right-page flip-page ${showNextDrag ? (dragState.isReleasing ? 'flip-releasing' : '') : 'flip-anim'}`}
               style={
-                showNextDrag 
-                  ? { 
-                      transform: `rotateY(${dragState.angle}deg)`, 
-                      transition: dragState.isReleasing ? 'transform 0.8s cubic-bezier(0.645, 0.045, 0.355, 1)' : 'none',
-                      zIndex: 10
+                showNextDrag
+                  ? {
+                      transform: `rotateY(${dragState.angle}deg)`,
+                      transition: dragState.isReleasing ? `transform ${dragState.releaseDuration}ms cubic-bezier(0.645, 0.045, 0.355, 1)` : 'none',
+                      zIndex: 10,
+                      '--shade': dragState.isReleasing ? 0 : Math.round(Math.sin(Math.abs(dragState.angle) * Math.PI / 180) * 55) / 100,
+                      '--shade-dur': `${dragState.releaseDuration}ms`
                     }
-                  : { 
-                      transform: 'rotateY(0deg)', 
+                  : {
+                      transform: 'rotateY(0deg)',
                       animation: 'flipToLeft 0.8s forwards cubic-bezier(0.645, 0.045, 0.355, 1)',
                       zIndex: 10
                     }
@@ -790,17 +1158,19 @@ export default function Book() {
 
           {/* Dynamic Drag/Flipping Page (Prev) */}
           {(showPrevDrag || (isFlipping && flipDirection === 'prev')) && prevDrawing && (
-            <div 
-              className="page left-page" 
+            <div
+              className={`page left-page flip-page ${showPrevDrag ? (dragState.isReleasing ? 'flip-releasing' : '') : 'flip-anim'}`}
               style={
-                showPrevDrag 
-                  ? { 
-                      transform: `rotateY(${dragState.angle}deg)`, 
-                      transition: dragState.isReleasing ? 'transform 0.8s cubic-bezier(0.645, 0.045, 0.355, 1)' : 'none',
-                      zIndex: 10
+                showPrevDrag
+                  ? {
+                      transform: `rotateY(${dragState.angle}deg)`,
+                      transition: dragState.isReleasing ? `transform ${dragState.releaseDuration}ms cubic-bezier(0.645, 0.045, 0.355, 1)` : 'none',
+                      zIndex: 10,
+                      '--shade': dragState.isReleasing ? 0 : Math.round(Math.sin(Math.abs(dragState.angle) * Math.PI / 180) * 55) / 100,
+                      '--shade-dur': `${dragState.releaseDuration}ms`
                     }
-                  : { 
-                      transform: 'rotateY(180deg)', 
+                  : {
+                      transform: 'rotateY(180deg)',
                       animation: 'flipToRight 0.8s forwards cubic-bezier(0.645, 0.045, 0.355, 1)',
                       zIndex: 10
                     }

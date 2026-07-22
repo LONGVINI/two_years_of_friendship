@@ -1,0 +1,60 @@
+.polaroid-game-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 4px;
+}
+
+.polaroid-hint {
+  position: absolute;
+  top: 20px;
+  left: 0;
+  width: 100%;
+  text-align: center;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 1.5rem;
+  color: rgba(255,255,255,0.3);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.polaroid-card {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 200px;
+  background: #fff;
+  padding: 10px 10px 40px 10px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+  cursor: grab;
+  transition: transform 0.1s ease, box-shadow 0.2s ease;
+  user-select: none;
+  touch-action: none;
+}
+
+.polaroid-card.dragging {
+  cursor: grabbing;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.8);
+}
+
+.polaroid-photo {
+  width: 100%;
+  height: 180px;
+  background: #111;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.polaroid-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}

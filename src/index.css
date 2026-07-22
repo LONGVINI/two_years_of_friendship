@@ -1,16 +1,13 @@
 /* CSS Variables & Design System */
-@property --bg-gradient-start {
-  syntax: '<color>';
-  inherits: true;
-  initial-value: #0c0d14;
-}
-@property --bg-gradient-end {
-  syntax: '<color>';
-  inherits: true;
-  initial-value: #050508;
-}
+@property --bg-gradient-start { syntax: '<color>'; initial-value: #0c0d14; inherits: true; }
+@property --bg-gradient-end { syntax: '<color>'; initial-value: #050508; inherits: true; }
+@property --color-primary { syntax: '<color>'; initial-value: #a78bfa; inherits: true; }
+@property --color-primary-rgb { syntax: '<color>'; initial-value: 167, 139, 250; inherits: true; }
+@property --glass-bg { syntax: '<color>'; initial-value: rgba(20, 20, 30, 0.4); inherits: true; }
 
 :root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  
   --font-display: 'Playfair Display', Georgia, serif;
   --font-title: 'Outfit', 'Inter', sans-serif;
   --font-sans: 'Inter', sans-serif;
@@ -51,14 +48,17 @@ html, body, #root {
 .app-container {
   width: 100vw;
   height: 100vh;
+  background-color: #000;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
-  position: relative;
-  overflow: hidden;
-  transition: --bg-gradient-start 1.5s ease-in-out, --bg-gradient-end 1.5s ease-in-out;
+}
+
+/* Ambient glow blobs - we hide them because canvas does a better job now */
+.ambient-light,
+.ambient-light-secondary {
+  display: none;
 }
 
 /* Deep Space Vignette Overlay */
