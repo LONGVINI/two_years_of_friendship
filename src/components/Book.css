@@ -243,11 +243,6 @@
   transform: none;
 }
 
-.chapter-page-right.back .chapter-subtitle {
-  text-align: right;
-  transform: translateX(20px);
-}
-
 .content-page.back::before {
   left: auto;
   right: 0;
@@ -435,6 +430,9 @@
   writing-mode: vertical-rl;
   text-orientation: mixed;
   cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
   box-shadow: -30px 0 0 var(--color-primary), 6px 6px 20px rgba(0,0,0,0.5), inset 2px 0 5px rgba(255,255,255,0.4);
   transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.4s ease;
   opacity: 0.75;
