@@ -1,0 +1,11 @@
+.genesis-trial {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* камни, пыль и кометы уходят за книгу */
+.genesis-back { z-index: 0; }
+
+/* балка, добыча и искры — поверх разворота */
+.genesis-front { z-index: 400; }

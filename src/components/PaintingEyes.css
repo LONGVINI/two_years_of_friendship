@@ -1,0 +1,6 @@
+.painting-eyes {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}

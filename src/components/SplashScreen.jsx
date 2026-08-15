@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import StarField from './StarField';
 import './SplashScreen.css';
 
 export default function SplashScreen({ onComplete }) {
@@ -48,6 +49,8 @@ export default function SplashScreen({ onComplete }) {
 
   return (
     <div className={`splash-overlay ${isAnimatingOut ? 'animating-out' : ''}`}>
+      <StarField />
+
       {/* Top Half */}
       <div className="splash-half splash-top">
         <div className="splash-content-top">

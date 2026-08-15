@@ -1,0 +1,28 @@
+/* Общий стиль работ растягивает любую картинку на весь холст,
+   поэтому камням габарит задаём жёстко и вписываем по длинной стороне */
+.photo-wrapper img.photo-crystal,
+.photo-crystal {
+  position: absolute;
+  z-index: 5;
+  width: auto !important;
+  height: auto !important;
+  max-width: var(--crystal-size, 42px);
+  max-height: var(--crystal-size, 42px);
+  object-fit: contain;
+  /* .image-page img вешает прямоугольную тень и скругление на любую картинку
+     страницы — вокруг камня это и была та самая рамка */
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  min-height: 0 !important;
+  pointer-events: none;
+  user-select: none;
+  /* тень едва намечена: широкая читалась как грязное пятно под камнем */
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+  transform-origin: center;
+}
+
+/* Камень ложится прямо на угол работы, прижимая его, а не висит рядом */
+.photo-crystal.tl { top: -13px; left: -13px; }
+.photo-crystal.tr { top: -13px; right: -13px; }
+.photo-crystal.br { bottom: -13px; right: -13px; }
+.photo-crystal.bl { bottom: -13px; left: -13px; }

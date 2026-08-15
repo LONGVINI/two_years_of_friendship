@@ -1,10 +1,36 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Volume2, VolumeX, RefreshCw, Play, Pause, Clock } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { ChevronLeft, ChevronRight, Volume2, VolumeX, RefreshCw, Play, Pause, Clock, ChevronDown } from 'lucide-react';
 import ScratchGame from './ScratchGame';
 import PolaroidGame from './PolaroidGame';
+import ChapterOrnament from './ChapterOrnament';
+import CornerConstellations from './CornerConstellations';
+import CornerCrystals from './CornerCrystals';
+import RenaissanceEyes from './RenaissanceEyes';
+import EyeTrial from './EyeTrial';
+import PaintingEyes from './PaintingEyes';
+import TrialOverlay from './TrialOverlay';
+import GenesisTrial, { SEAM_STAGES } from './GenesisTrial';
+import {
+  INTERACTIVE_MODE,
+  CHAPTERS_WITH_TRIAL,
+  PRECLEARED_CHAPTERS,
+  cheatEnabled,
+  setCheat,
+  resetProgress,
+  loadProgress,
+  saveProgress,
+  buildUnlockMap,
+  chapterCleared,
+  chapterFullySeen,
+  chapterChallengeDone
+} from '../gameState';
 import './Book.css';
 
 const ENABLE_PHOTO_FLIP = false;
+
+// Chapters whose pages hold their artwork with stars instead of paper corners
+const COSMIC_CHAPTERS = ['Тёмная тропа'];
+const CRYSTAL_CHAPTERS = ['Генезис'];
 
 export default function Book() {
   const [drawings, setDrawings] = useState([]);
@@ -53,14 +79,278 @@ export default function Book() {
     pageStamp: -1
   });
   const [photoFlipped, setPhotoFlipped] = useState(false);
+  const [progress, setProgress] = useState(() => (INTERACTIVE_MODE ? loadProgress() : { seen: {}, done: {} }));
+  const challengeRef = useRef({ fed: 0, lastFedAt: 0, chapterId: null, solved: false, complete: null, trialActive: false });
+  const handleNextRef = useRef(null);
+
+  // Читкод: Ctrl+Shift+U открывает все закладки, Ctrl+Shift+R сбрасывает прогресс.
+  // Те же действия доступны из консоли: window.ruzCheat(true) / window.ruzReset()
+  const [cheat, setCheatState] = useState(() => (typeof window !== 'undefined' ? cheatEnabled() : false));
+  const jumpToTrialRef = useRef(null);
+  const gotoRef = useRef(null);
+  const statusRef = useRef(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const applyCheat = (on) => {
+      setCheat(on);
+      setCheatState(on);
+      console.info(on ? 'Читкод включён: все главы открыты' : 'Читкод выключен');
+    };
+
+    window.ruzCheat = applyCheat;
+    window.ruzReset = () => {
+      resetProgress();
+      setProgress({ seen: {}, done: {} });
+      console.info('Прогресс сброшен');
+    };
+
+    // Показать, что открыто и почему
+    window.ruzStatus = () => {
+      const show = statusRef.current;
+      if (show) show();
+    };
+
+    // Прыжок к испытанию: последняя работа текущей главы, всё до неё считается прочитанным
+    window.ruzTrial = () => {
+      const jump = jumpToTrialRef.current;
+      if (jump) jump();
+    };
+    window.ruzGoto = (index) => {
+      const jump = gotoRef.current;
+      if (jump) jump(index);
+    };
+
+    const onKey = (e) => {
+      if (!e.ctrlKey || !e.shiftKey) return;
+      if (e.code === 'KeyU') {
+        e.preventDefault();
+        applyCheat(!cheatEnabled());
+      }
+      if (e.code === 'KeyR') {
+        e.preventDefault();
+        window.ruzReset();
+      }
+      if (e.code === 'KeyE') {
+        e.preventDefault();
+        if (jumpToTrialRef.current) jumpToTrialRef.current();
+      }
+    };
+
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      delete window.ruzCheat;
+      delete window.ruzReset;
+    };
+  }, []);
+
+  // Which chapter a page belongs to; chapter dividers carry their own id
+  const chapterIdOf = (drawing) => {
+    if (!drawing) return null;
+    return drawing.type === 'chapter' ? drawing.id : drawing.chapterId || null;
+  };
+
+  const unlockMap = useMemo(
+    () => (INTERACTIVE_MODE ? buildUnlockMap(drawings, progress) : {}),
+    [drawings, progress, cheat]
+  );
+
+  const prevUnlockRef = useRef({});
+  const [justUnlocked, setJustUnlocked] = useState(null);
+
+  useEffect(() => {
+    const prev = prevUnlockRef.current;
+    const opened = Object.keys(unlockMap).find((id) => unlockMap[id] && prev[id] === false);
+    prevUnlockRef.current = { ...unlockMap };
+    if (!opened) return undefined;
+    // даём догореть вспышке испытания, потом показываем разрыв цепи целиком
+    const show = setTimeout(() => setJustUnlocked(opened), 420);
+    const hide = setTimeout(() => setJustUnlocked(null), 420 + 2200);
+    return () => { clearTimeout(show); clearTimeout(hide); };
+  }, [unlockMap]);
+
+  // The last artwork of every chapter is where its trial waits
+  const lastPageOfChapter = useMemo(() => {
+    const map = {};
+    drawings.forEach((d, i) => {
+      if (d.chapterId) map[d.chapterId] = i;
+    });
+    return map;
+  }, [drawings]);
+
+  const currentChapterId = chapterIdOf(drawings[currentIndex]);
+  const nextChapterId = chapterIdOf(drawings[currentIndex + 1]);
+  const crossesChapterBorder = Boolean(currentChapterId && nextChapterId && nextChapterId !== currentChapterId);
+  const forwardLocked =
+    INTERACTIVE_MODE && crossesChapterBorder && !chapterCleared(drawings, currentChapterId, progress);
+
+  // Читкод-прыжки: к испытанию текущей главы и к произвольной странице
+  useEffect(() => {
+    gotoRef.current = (index) => {
+      const target = Math.max(0, Math.min(drawings.length - 1, Number(index) || 0));
+      setCurrentIndex(target);
+      console.info('Переход на страницу', target, drawings[target] && drawings[target].title);
+    };
+
+    statusRef.current = () => {
+      const chapters = drawings.filter((d) => d.type === 'chapter');
+      const rows = chapters.map((ch) => {
+        const pages = drawings.filter((d) => d.chapterId === ch.id);
+        const seen = pages.filter((d) => progress.seen[d.id]).length;
+        return {
+          'глава': ch.title,
+          'прочитано': `${seen} из ${pages.length}`,
+          'испытание': CHAPTERS_WITH_TRIAL.includes(ch.id)
+            ? (progress.done[ch.id] ? 'пройдено' : 'не пройдено')
+            : 'нет',
+          'открыта': unlockMap[ch.id] ? 'да' : 'нет'
+        };
+      });
+      console.table(rows);
+      if (cheat) console.info('внимание: включён читкод, открыто всё');
+    };
+
+    jumpToTrialRef.current = () => {
+      const chapter = chapterIdOf(drawings[currentIndex]);
+      const target = chapter ? lastPageOfChapter[chapter] : null;
+      if (target === undefined || target === null) {
+        console.info('Не нашёл испытание: текущая страница вне главы');
+        return;
+      }
+      // помечаем главу прочитанной, иначе замок останется
+      setProgress((prev) => {
+        const seen = { ...prev.seen };
+        drawings.forEach((d) => { if (d.chapterId === chapter) seen[d.id] = true; });
+        const next = { seen, done: prev.done };
+        saveProgress(next);
+        return next;
+      });
+      setCurrentIndex(target);
+      console.info('Прыжок к испытанию главы', chapter);
+    };
+  }, [drawings, currentIndex, lastPageOfChapter, progress, unlockMap, cheat]);
+
+  const isTrialIndex = (index) => {
+    const cid = chapterIdOf(drawings[index]);
+    return (
+      INTERACTIVE_MODE &&
+      !cheat &&
+      Boolean(cid) &&
+      CHAPTERS_WITH_TRIAL.includes(cid) &&
+      !PRECLEARED_CHAPTERS.includes(cid) &&
+      index === lastPageOfChapter[cid] &&
+      !progress.done[cid]
+    );
+  };
+
+  const trialActive = isTrialIndex(currentIndex);
+
+  const missPoolRef = useRef(null);
+  const [seamAspect, setSeamAspect] = useState(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [rush, setRush] = useState(null);
+  const rushTimers = useRef([]);
+  const [eyeScatter, setEyeScatter] = useState(false);
+  const [eyeEscapes, setEyeEscapes] = useState(0);
+  const [blackout, setBlackout] = useState(false);
+  const hurledRef = useRef(false);
+  const playPaperSoundRef = useRef(null);
+  const [seamStage, setSeamStage] = useState(0);
+  const [seamHits, setSeamHits] = useState(0);
+  const seamRef = useRef(null);
+  // «Слепое предчувствие» — маяк главы. Впервые дойдя до неё, книгу
+  // отшвыривает в конец Ренессанса: дальше идти можно только назад.
+  const BEACON_TITLE = 'Слепое предчувствие';
+
+  // Переброс живёт вне эффекта: смена страницы перезапускала бы его и
+  // сбрасывала собственные таймеры, оставляя экран чёрным навсегда
+  const hurlTimers = useRef([]);
+  const hurlTo = useCallback((index) => {
+    hurlTimers.current.forEach(clearTimeout);
+    setBlackout(true);
+    hurlTimers.current = [
+      setTimeout(() => playPaperSoundRef.current && playPaperSoundRef.current(), 420),
+      setTimeout(() => setCurrentIndex(index), 1150),
+      setTimeout(() => setBlackout(false), 1400)
+    ];
+  }, []);
+
+  useEffect(() => () => hurlTimers.current.forEach(clearTimeout), []);
+
+  useEffect(() => {
+    if (!INTERACTIVE_MODE || cheat) return;
+    const here = drawings[currentIndex];
+    if (!here || here.title !== BEACON_TITLE) return;
+    if (progress.done['chapter-3'] || hurledRef.current) return;
+    const last = lastPageOfChapter['chapter-3'];
+    if (last === undefined) return;
+    hurledRef.current = true;
+    hurlTo(last);
+  }, [currentIndex, drawings, progress, cheat, lastPageOfChapter, hurlTo]);
+
+  // Вернувшись к маяку и замерев, получаешь то, чего нет больше нигде:
+  // глаза расходятся в стороны и открывают середину
+  useEffect(() => {
+    if (!INTERACTIVE_MODE) { setEyeScatter(false); return undefined; }
+    const here = drawings[currentIndex];
+    const atBeacon = Boolean(here && here.title === BEACON_TITLE && hurledRef.current);
+    setEyeScatter(atBeacon);
+    return undefined;
+  }, [currentIndex, drawings]);
+
+  const [tamed, setTamed] = useState(false);
+  const [decor, setDecor] = useState(null);
+  const [holdingGem, setHoldingGem] = useState(false);
+
+  useEffect(() => {
+    if (!INTERACTIVE_MODE) return;
+    fetch(`${import.meta.env.BASE_URL}decor/manifest.json`)
+      .then((res) => res.json())
+      .then(setDecor)
+      .catch(() => setDecor(null));
+  }, []);
+  const [lockNudge, setLockNudge] = useState(0);
+  const [straining, setStraining] = useState(false);
+  const refuseForward = useCallback(() => {
+    setLockNudge((n) => n + 1);
+    setStraining(true);
+  }, []);
+
+  useEffect(() => {
+    if (!straining) return undefined;
+    const id = setTimeout(() => setStraining(false), 430);
+    return () => clearTimeout(id);
+  }, [straining, lockNudge]);
+
 
   // Fetch drawings list
   const isCoverClosed = currentIndex === 0 && !isFlipping && !dragState.isDragging && !dragState.isReleasing;
 
-  // Theme switches at flip start so colors morph while the page is in flight
+  // Theme switches at flip start so colors morph while the page is in flight.
+  // A released drag settles on 180 degrees only when the turn completes, so the
+  // same morph starts there instead of jumping after the page has landed.
   let themeIndex = currentIndex;
   if (isFlipping && flipDirection === 'next') themeIndex = Math.min(currentIndex + 1, drawings.length - 1);
   else if (isFlipping && flipDirection === 'prev') themeIndex = Math.max(currentIndex - 1, 0);
+  else if (dragState.isReleasing && dragState.angle === -180) themeIndex = Math.min(currentIndex + 1, drawings.length - 1);
+  else if (dragState.isReleasing && dragState.angle === 180) themeIndex = Math.max(currentIndex - 1, 0);
+
+  // Балка стыка встаёт на место уже в полёте страницы, а не после её посадки.
+  // Ручное перетаскивание тоже считается: разворот виден задолго до отпускания.
+  let seamIndex = themeIndex;
+  if (dragState.isDragging && dragState.direction === 'next') {
+    seamIndex = Math.min(currentIndex + 1, drawings.length - 1);
+  } else if (dragState.isDragging && dragState.direction === 'prev') {
+    seamIndex = Math.max(currentIndex - 1, 0);
+  }
+  // Пока задание висит, балка не снимается: листание назад её не убирает,
+  // страница испытания остаётся с тем же отступом текста
+  if (!isTrialIndex(seamIndex) && isTrialIndex(currentIndex)) seamIndex = currentIndex;
+
+
+  const seamVisible = isTrialIndex(seamIndex) && chapterIdOf(drawings[seamIndex]) === 'chapter-2';
 
   useEffect(() => {
     fetch(`${import.meta.env.BASE_URL}album.json`)
@@ -105,9 +395,9 @@ export default function Book() {
       }
     }
     const chapterEraMap = {
-      'Генезис': 'constellation',
-      'Мрак и Поиск': 'fog',
-      'Ренессанс': 'ink',
+      'Тёмная тропа': 'constellation',
+      'Генезис': 'cave',
+      'Ренессанс': 'gloom',
       'Современность': 'orbit',
       'За гранью': 'watercolor'
     };
@@ -133,6 +423,45 @@ export default function Book() {
       pageStamp: themeIndex
     };
   }, [themeIndex, drawings]);
+
+  // Every opened drawing is remembered: a chapter only clears once all of it was read
+  useEffect(() => {
+    if (!INTERACTIVE_MODE) return;
+    const drawing = drawings[currentIndex];
+    if (!drawing || !drawing.chapterId || drawing.type === 'chapter') return;
+    setProgress((prev) => {
+      if (prev.seen[drawing.id]) return prev;
+      const next = { seen: { ...prev.seen, [drawing.id]: true }, done: prev.done };
+      saveProgress(next);
+      return next;
+    });
+  }, [currentIndex, drawings]);
+
+  // Challenges report their success through this
+  const completeChallenge = useCallback((chapterId) => {
+    if (!INTERACTIVE_MODE || !chapterId) return;
+    setProgress((prev) => {
+      if (prev.done[chapterId]) return prev;
+      const next = { seen: prev.seen, done: { ...prev.done, [chapterId]: true } };
+      saveProgress(next);
+      return next;
+    });
+  }, []);
+
+  // The canvas loop lives in its own closure, so it reads the challenge state through a ref
+  useEffect(() => {
+    challengeRef.current.chapterId = currentChapterId;
+    challengeRef.current.complete = completeChallenge;
+    challengeRef.current.solved = Boolean(currentChapterId && progress.done[currentChapterId]);
+    challengeRef.current.trialActive = trialActive;
+    challengeRef.current.tamed = tamed;
+    challengeRef.current.onTamed = () => setTamed(true);
+  }, [currentChapterId, completeChallenge, progress, trialActive, tamed]);
+
+  // Leaving the trial page puts the darkness back out of reach
+  useEffect(() => {
+    if (!trialActive) setTamed(false);
+  }, [trialActive, currentChapterId]);
 
   // Preload and decode neighbor images so flips do not jank on synchronous decode
   useEffect(() => {
@@ -161,6 +490,26 @@ export default function Book() {
     if (canvas.height !== height) canvas.height = height;
 
     // Half-resolution ink layer for the Renaissance drawing effect
+    // Star sprite cache: redrawing a radial gradient per star per frame is what
+    // used to force a low star ceiling, so the glow is baked once and blitted
+    const starSprite = document.createElement('canvas');
+    starSprite.width = 64;
+    starSprite.height = 64;
+    const starSpriteCtx = starSprite.getContext('2d');
+    const spriteState = { color: null };
+
+    const refreshStarSprite = (rgba) => {
+      if (spriteState.color === rgba) return;
+      spriteState.color = rgba;
+      starSpriteCtx.clearRect(0, 0, 64, 64);
+      const g = starSpriteCtx.createRadialGradient(32, 32, 0, 32, 32, 32);
+      g.addColorStop(0, `${rgba}, 1)`);
+      g.addColorStop(0.3, `${rgba}, 0.3)`);
+      g.addColorStop(1, 'transparent');
+      starSpriteCtx.fillStyle = g;
+      starSpriteCtx.fillRect(0, 0, 64, 64);
+    };
+
     const paintCanvas = document.createElement('canvas');
     paintCanvas.width = Math.max(1, Math.ceil(width / 2));
     paintCanvas.height = Math.max(1, Math.ceil(height / 2));
@@ -183,6 +532,7 @@ export default function Book() {
         paintCanvas.height = ph;
         paintCtx.drawImage(snapshot, 0, 0, pw, ph);
       }
+      if (particlesRef.current) particlesRef.current.dust = null;
     };
     
     const handlePointerMove = (e) => {
@@ -214,6 +564,11 @@ export default function Book() {
     let prevStamp = eraRef.current.pageStamp;
     let nextShootAt = 0;
     let nextEmberAt = 0;
+    let nextHoleAt = 0;
+    let nextQuasarAt = 0;
+    let nextNovaAt = 0;
+    let nextBirthAt = 0;
+    let trial_nextForcedHole = 0;
 
     // Initialize unified particles on mount or if physics state is missing
     if (!particlesRef.current || !particlesRef.current.particles || !particlesRef.current.physics) {
@@ -232,6 +587,9 @@ export default function Book() {
       }
       particlesRef.current = {
         particles,
+        cosmic: [],
+        dust: null,
+        sky: { driftX: 0.04, driftY: 0.012, phase: Math.random() * Math.PI * 2, dustAlpha: 0 },
         physics: {
           upwardForce: 0,
           centerGravity: 0,
@@ -246,8 +604,199 @@ export default function Book() {
       };
     }
 
+    // Genesis sky: helpers that seed permanent stars and rare cosmic events
+    const STAR_LIMIT = 2000;
+    const STAR_HARD_CAP = 2600;
+    let starSeq = 1;
+
+    const ensureCosmic = () => {
+      if (!particlesRef.current.cosmic) particlesRef.current.cosmic = [];
+      if (!particlesRef.current.sky) {
+        particlesRef.current.sky = { driftX: 0.04, driftY: 0.012, phase: Math.random() * Math.PI * 2 };
+      }
+      return particlesRef.current.cosmic;
+    };
+
+    const spawnStar = (x, y, extra = {}) => {
+      particlesRef.current.particles.push({
+        sid: starSeq++,
+        links: null,
+        x, y,
+        bx: x,
+        by: y,
+        wamp: 0.5 + Math.random() * 1.3,
+        wsp: 0.0003 + Math.random() * 0.0005,
+        wph: Math.random() * Math.PI * 2,
+        vx: 0,
+        vy: 0,
+        size: 0.4,
+        birthSize: 1.2 + Math.random() * 1.6,
+        alpha: 0,
+        targetAlpha: 0.35 + Math.random() * 0.45,
+        fadeIn: 0.03 + Math.random() * 0.03,
+        star: true,
+        angle: Math.random() * Math.PI * 2,
+        orbitRadius: Math.random() * 200 + 50,
+        ...extra
+      });
+      return particlesRef.current.particles[particlesRef.current.particles.length - 1];
+    };
+
+    const spawnBurst = (x, y, count, power, tint) => {
+      for (let i = 0; i < count; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const speed = power * (0.4 + Math.random() * 0.9);
+        particlesRef.current.particles.push({
+          x, y,
+          vx: Math.cos(a) * speed,
+          vy: Math.sin(a) * speed,
+          size: 1 + Math.random() * 2.5,
+          alpha: 1,
+          decay: 0.012 + Math.random() * 0.02,
+          hot: tint,
+          angle: 0, orbitRadius: 0
+        });
+      }
+    };
+
+    const spawnShock = (x, y, maxR, tint) => {
+      ensureCosmic().push({ type: 'shock', x, y, r: 2, maxR, tint, alpha: 1 });
+    };
+
+    const spawnQuasar = (x, y) => {
+      const now = performance.now();
+      ensureCosmic().push({
+        type: 'quasar',
+        x, y,
+        bornAt: now,
+        explodeAt: now + 2000 + Math.random() * 2600,
+        angle: Math.random() * Math.PI
+      });
+    };
+
+    const spawnBlackHole = () => {
+      const cosmic = ensureCosmic();
+      if (cosmic.filter((ev) => ev.type === 'blackhole').length >= 3) return;
+      const fromLeft = Math.random() < 0.5;
+      cosmic.push({
+        type: 'blackhole',
+        x: fromLeft ? -60 : width + 60,
+        y: Math.random() * height * 0.8 + height * 0.1,
+        vx: (fromLeft ? 1 : -1) * (0.7 + Math.random() * 0.6),
+        vy: (Math.random() - 0.5) * 0.25,
+        r: 13 + Math.random() * 9,
+        eaten: 0,
+        spin: 0
+      });
+    };
+
+    const spawnConstellation = (x, y, headingOverride) => {
+      const count = 3 + Math.floor(Math.random() * 4);
+      const born = [];
+
+      // Each figure sails its own way at its own pace
+      const heading = headingOverride === undefined ? Math.random() * Math.PI * 2 : headingOverride;
+      const speed = 0.03 + Math.random() * 0.14;
+      const gvx = Math.cos(heading) * speed;
+      const gvy = Math.sin(heading) * speed;
+
+      for (let i = 0; i < count; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = 30 + Math.random() * 80;
+        born.push(spawnStar(x + Math.cos(a) * r, y + Math.sin(a) * r, { gvx, gvy }));
+      }
+
+      // Fixed skeleton: a walk through the group plus at most one branch,
+      // so the figure keeps its shape instead of meshing with the whole sky
+      born.sort((a, b) => (a.x - b.x) + (a.y - b.y) * 0.4);
+      const link = (from, to) => {
+        const len = Math.hypot(from.x - to.x, from.y - to.y);
+        from.links = [...(from.links || []), { sid: to.sid, len }];
+      };
+      for (let i = 0; i < born.length - 1; i++) link(born[i], born[i + 1]);
+      if (born.length > 3 && Math.random() < 0.65) {
+        const from = Math.floor(Math.random() * (born.length - 2));
+        const to = from + 2 + Math.floor(Math.random() * (born.length - from - 2));
+        if (born[to]) link(born[from], born[to]);
+      }
+
+      const roll = Math.random();
+      if (roll < 0.05) {
+        spawnQuasar(x, y);
+      } else if (roll < 0.24 && born.length) {
+        // Supernova: one of the fresh stars is already doomed
+        const doomed = born[Math.floor(Math.random() * born.length)];
+        doomed.novaAt = performance.now() + 1500 + Math.random() * 3500;
+      }
+    };
+
     const handleWindowClick = (e) => {
       if (!particlesRef.current?.particles) return;
+
+      if (eraRef.current.era === 'constellation') {
+        const onChrome = e.target && e.target.closest &&
+          e.target.closest('.book, .controls-panel, .book-bookmarks, .album-header, .splash-overlay');
+        if (onChrome) return;
+
+        const cosmic = ensureCosmic();
+        const challenge = challengeRef.current;
+        const onTrial = Boolean(challenge.trialActive);
+
+        // A click thrown into a hole feeds it instead of seeding a constellation
+        for (let i = 0; i < cosmic.length; i++) {
+          const ev = cosmic[i];
+          if (ev.type !== 'blackhole') continue;
+          const dx = e.clientX - ev.x;
+          const dy = e.clientY - ev.y;
+          if (dx * dx + dy * dy > 72 * 72) continue;
+
+          // Trial: five feedings tame the darkness and the cursor becomes the hole
+          if (onTrial && !challenge.tamed) {
+            const now = performance.now();
+            if (challenge.lastFedAt && now - challenge.lastFedAt > 6000) challenge.fed = 0;
+            challenge.lastFedAt = now;
+            challenge.fed += 1;
+            ev.fedAt = now;
+            ev.r = Math.min(ev.r + 3.2, 44);
+            spawnBurst(ev.x, ev.y, 16, 3.4, true);
+
+            if (challenge.fed >= 5) {
+              challenge.fed = 0;
+              spawnShock(ev.x, ev.y, 340, true);
+              spawnBurst(ev.x, ev.y, 46, 7, true);
+              ev.collapsing = now;
+              if (challenge.onTamed) challenge.onTamed();
+            }
+            return;
+          }
+
+          const now = performance.now();
+          // Feeding has to be deliberate: a long pause resets the streak
+          if (challenge.lastFedAt && now - challenge.lastFedAt > 6000) challenge.fed = 0;
+          challenge.lastFedAt = now;
+
+          ev.fedAt = now;
+          ev.r = Math.min(ev.r + 2.4, 40);
+          spawnBurst(ev.x, ev.y, 14, 3.2, true);
+
+          // Feeding is just play now: the chapter is cleared only by the trial
+          if (ev.r > 34) {
+            spawnShock(ev.x, ev.y, 260, true);
+            spawnBurst(ev.x, ev.y, 40, 6, true);
+            ev.collapsing = performance.now();
+          }
+          return;
+        }
+
+        // Пустой космос отзывается одинаково: и когда рождается созвездие,
+        // и когда во время испытания клик уходит мимо дыры
+        if (playMissRef.current) playMissRef.current();
+        if (onTrial) return;
+
+        spawnConstellation(e.clientX, e.clientY);
+        return;
+      }
+
       for (let i = 0; i < 15; i++) {
         particlesRef.current.particles.push({
           x: e.clientX + (Math.random() - 0.5) * 10,
@@ -287,14 +836,29 @@ export default function Book() {
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, width, height);
 
+      // Ренессанс тонет в темноте: поверх фона ложится глухая вуаль,
+      // на которой глаза читаются, а всё прочее гаснет
+      if (era === 'gloom') {
+        const veil = ctx.createRadialGradient(
+          width / 2, height / 2, Math.min(width, height) * 0.18,
+          width / 2, height / 2, Math.max(width, height) * 0.78
+        );
+        veil.addColorStop(0, 'rgba(2, 2, 3, 0.42)');
+        veil.addColorStop(1, 'rgba(0, 0, 0, 0.86)');
+        ctx.fillStyle = veil;
+        ctx.fillRect(0, 0, width, height);
+      }
+
       // 2. Determine Target Physics for current Era
       const physicsByEra = {
+        gloom: { upwardForce: 0.01, centerGravity: 0, orbitSpeed: 0, randomJitter: 0.04, targetSize: 2.4, lineOpacity: 0, glowMultiplier: 2.4, friction: 0.985 },
         constellation: { upwardForce: 0, centerGravity: 0, orbitSpeed: 0, randomJitter: 0.15, targetSize: 2, lineOpacity: 0.4, glowMultiplier: 4, friction: 0.93 },
         fog: { upwardForce: 0.3, centerGravity: 0, orbitSpeed: 0, randomJitter: 0.15, targetSize: 28, lineOpacity: 0, glowMultiplier: 2, friction: 0.93 },
         sparks: { upwardForce: 1.5, centerGravity: 0, orbitSpeed: 0, randomJitter: 0.8, targetSize: 1.5, lineOpacity: 0, glowMultiplier: 4, friction: 0.93 },
         ink: { upwardForce: 0, centerGravity: 0, orbitSpeed: 0, randomJitter: 0.05, targetSize: 2, lineOpacity: 0, glowMultiplier: 3, friction: 0.95 },
         orbit: { upwardForce: 0, centerGravity: 0.005, orbitSpeed: 0.003, randomJitter: 0.02, targetSize: 3, lineOpacity: 0, glowMultiplier: 4, friction: 0.99 },
-        watercolor: { upwardForce: 0.02, centerGravity: 0, orbitSpeed: 0, randomJitter: 0.05, targetSize: 40, lineOpacity: 0, glowMultiplier: 2, friction: 0.93 }
+        watercolor: { upwardForce: 0.02, centerGravity: 0, orbitSpeed: 0, randomJitter: 0.05, targetSize: 40, lineOpacity: 0, glowMultiplier: 2, friction: 0.93 },
+        cave: { upwardForce: 0, centerGravity: 0, orbitSpeed: 0, randomJitter: 0.02, targetSize: 2, lineOpacity: 0, glowMultiplier: 2, friction: 0.96 }
       };
       const targetPhysics = physicsByEra[era] || physicsByEra.constellation;
 
@@ -423,15 +987,19 @@ export default function Book() {
 
       // Era ambient events: shooting stars in Genesis, warm embers in the fog
       if (era === 'constellation' && tNow > nextShootAt) {
-        nextShootAt = tNow + 4000 + Math.random() * 5000;
+        nextShootAt = tNow + 5000 + Math.random() * 9000;
+        const fromLeft = Math.random() < 0.7;
+        const speed = 26 + Math.random() * 14;
+        const slope = 0.25 + Math.random() * 0.5;
         particles.push({
-          x: Math.random() * width * 0.5,
-          y: Math.random() * height * 0.3,
-          vx: 20 + Math.random() * 8,
-          vy: 5 + Math.random() * 3,
-          size: 2,
+          x: fromLeft ? -40 : width + 40,
+          y: Math.random() * height * 0.55,
+          vx: (fromLeft ? 1 : -1) * speed,
+          vy: speed * slope * 0.35,
+          size: 1.6,
           alpha: 1,
-          decay: 0.015,
+          decay: 0.012,
+          meteor: true,
           angle: 0,
           orbitRadius: 0
         });
@@ -452,14 +1020,300 @@ export default function Book() {
         });
       }
 
+      // 3a. Distant star dust: the far, almost invisible background
+      if (!particlesRef.current.dust) {
+        const dust = [];
+        const dustCount = Math.round((width * height) / 3400);
+        for (let i = 0; i < dustCount; i++) {
+          const dAngle = Math.random() * Math.PI * 2;
+          const dSpeed = 0.008 + Math.random() * 0.05;
+          dust.push({
+            x: Math.random() * width,
+            y: Math.random() * height,
+            dvx: Math.cos(dAngle) * dSpeed,
+            dvy: Math.sin(dAngle) * dSpeed,
+            r: 0.35 + Math.random() * 0.6,
+            a: 0.05 + Math.random() * 0.22,
+            tw: Math.random() < 0.35 ? 0.0005 + Math.random() * 0.0014 : 0,
+            ph: Math.random() * Math.PI * 2
+          });
+        }
+        particlesRef.current.dust = dust;
+      }
+
+      const skyState = particlesRef.current.sky ||
+        (particlesRef.current.sky = { driftX: 0.04, driftY: 0.012, phase: 0, dustAlpha: 0 });
+      skyState.dustAlpha += ((era === 'constellation' ? 1 : 0) - (skyState.dustAlpha || 0)) * 0.014;
+
+      if (skyState.dustAlpha > 0.01) {
+        const dust = particlesRef.current.dust;
+        const dustDriftX = skyState.driftX * Math.cos(skyState.phase) * 0.22;
+        const dustDriftY = skyState.driftY * Math.sin(skyState.phase * 0.7) * 0.22;
+        ctx.globalCompositeOperation = 'screen';
+        ctx.fillStyle = '#dde2ff';
+        for (let i = 0; i < dust.length; i++) {
+          const d = dust[i];
+          d.x += d.dvx + dustDriftX;
+          d.y += d.dvy + dustDriftY;
+          if (d.x < -2) d.x = width + 2;
+          else if (d.x > width + 2) d.x = -2;
+          if (d.y < -2) d.y = height + 2;
+          else if (d.y > height + 2) d.y = -2;
+          const twinkle = d.tw ? 0.6 + 0.4 * Math.sin(tNow * d.tw + d.ph) : 1;
+          ctx.globalAlpha = d.a * twinkle * skyState.dustAlpha;
+          ctx.fillRect(d.x, d.y, d.r * 2, d.r * 2);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      // 3b. Genesis sky: drift, doomed stars, quasars and black holes
+      const cosmic = particlesRef.current.cosmic || (particlesRef.current.cosmic = []);
+      const sky = particlesRef.current.sky ||
+        (particlesRef.current.sky = { driftX: 0.04, driftY: 0.012, phase: 0 });
+
+      // Небо гаснет не рывком: звёзды тускнеют, дыры успевают уйти за край
+      const skyAlive = era === 'constellation';
+      if (sky.fade === undefined) sky.fade = skyAlive ? 1 : 0;
+      sky.fade = Math.max(0, Math.min(1, sky.fade + (skyAlive ? 0.02 : -0.011)));
+      const skyFade = sky.fade;
+      if (!skyAlive && skyFade <= 0.01 && cosmic.length) cosmic.length = 0;
+
+      if (skyAlive || skyFade > 0.01) {
+        // The sky lives on its own: holes wander in, quasars ignite, stars die
+        if (skyAlive) {
+        if (!nextHoleAt) nextHoleAt = tNow + 7000 + Math.random() * 9000;
+        if (!nextQuasarAt) nextQuasarAt = tNow + 20000 + Math.random() * 25000;
+        if (!nextNovaAt) nextNovaAt = tNow + 6000 + Math.random() * 10000;
+
+        if (!nextBirthAt) nextBirthAt = tNow + 1500 + Math.random() * 2000;
+
+        if (tNow > nextBirthAt) {
+          const sparse = sky.visible < 150;
+          nextBirthAt = tNow + (sparse ? 900 + Math.random() * 1600 : 5000 + Math.random() * 8000);
+          if (Math.random() < 0.65) {
+            // Drifts in from beyond the frame, heading inward
+            const side = Math.floor(Math.random() * 4);
+            const inward = [0, Math.PI / 2, Math.PI, -Math.PI / 2][side];
+            const spread = (Math.random() - 0.5) * 1.1;
+            const pos = [
+              [-160, Math.random() * height],
+              [Math.random() * width, -160],
+              [width + 160, Math.random() * height],
+              [Math.random() * width, height + 160]
+            ][side];
+            spawnConstellation(pos[0], pos[1], inward + spread);
+          } else {
+            spawnConstellation(width * (0.1 + Math.random() * 0.8), height * (0.1 + Math.random() * 0.8));
+          }
+        }
+
+        // The trial needs its prey: keep a hole around until it is tamed
+        const trialState = challengeRef.current;
+        if (trialState.trialActive && !trialState.tamed) {
+          const holes = cosmic.filter((ev) => ev.type === 'blackhole' && !ev.collapsing);
+          if (holes.length === 0 && tNow > (trial_nextForcedHole || 0)) {
+            trial_nextForcedHole = tNow + 2500;
+            spawnBlackHole();
+          }
+        }
+
+        if (tNow > nextHoleAt) {
+          nextHoleAt = tNow + 18000 + Math.random() * 26000;
+          spawnBlackHole();
+        }
+        if (tNow > nextQuasarAt) {
+          nextQuasarAt = tNow + 35000 + Math.random() * 45000;
+          spawnQuasar(width * (0.15 + Math.random() * 0.7), height * (0.15 + Math.random() * 0.7));
+        }
+        if (tNow > nextNovaAt) {
+          nextNovaAt = tNow + 10000 + Math.random() * 18000;
+          const candidates = particles.filter((p) => p.star && !p.decay && !p.novaAt && !p.fadingOut);
+          if (candidates.length) {
+            candidates[Math.floor(Math.random() * candidates.length)].novaAt = tNow + 800 + Math.random() * 2500;
+          }
+        }
+
+        if (!sky.seeded) {
+          sky.seeded = true;
+          const cols = 9;
+          const rows = 5;
+          for (let cx = 0; cx < cols; cx++) {
+            for (let cy = 0; cy < rows; cy++) {
+              if (Math.random() < 0.12) continue;
+              const gx = ((cx + 0.5) / cols + (Math.random() - 0.5) * 0.1) * width;
+              const gy = ((cy + 0.5) / rows + (Math.random() - 0.5) * 0.16) * height;
+              spawnConstellation(gx, gy);
+            }
+          }
+        }
+        }
+
+        sky.phase += 0.0008;
+        const driftX = sky.driftX * Math.cos(sky.phase);
+        const driftY = sky.driftY * Math.sin(sky.phase * 0.7);
+
+        let starCount = 0;
+        let visibleStars = 0;
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          if (p.decay) continue;
+          starCount++;
+
+          if (p.star) {
+            if (p.bx > 0 && p.bx < width && p.by > 0 && p.by < height) visibleStars++;
+            // Anchored: the figure sails as one along its own heading, stars only breathe
+            p.bx += (p.gvx || 0) + driftX * 0.25;
+            p.by += (p.gvy || 0) + driftY * 0.25;
+            p.x = p.bx + Math.sin(tNow * p.wsp + p.wph) * p.wamp;
+            p.y = p.by + Math.cos(tNow * p.wsp * 0.8 + p.wph) * p.wamp;
+
+            // Fade out only well past the edge, so captured stars keep flying
+            const margin = 260;
+            if (p.bx < -margin || p.bx > width + margin || p.by < -margin || p.by > height + margin) {
+              p.leaving = true;
+            }
+            if (p.leaving) {
+              p.alpha -= 0.004;
+              if (p.alpha <= 0) {
+                particles.splice(i, 1);
+                continue;
+              }
+            }
+          } else {
+            p.x += driftX;
+            p.y += driftY;
+          }
+
+          if (p.novaAt && tNow > p.novaAt) {
+            spawnBurst(p.x, p.y, 26, 4.5, true);
+            spawnShock(p.x, p.y, 130, true);
+            particles.splice(i, 1);
+            continue;
+          }
+        }
+
+        sky.visible = visibleStars;
+
+        // Oldest stars quietly fade out once the sky gets crowded,
+        // and are dropped outright if births keep outrunning the fade
+        if (starCount > STAR_LIMIT) {
+          let toFade = starCount - STAR_LIMIT;
+          for (let i = 0; i < particles.length && toFade > 0; i++) {
+            const p = particles[i];
+            if (p.decay || p.fadingOut) continue;
+            p.fadingOut = true;
+            toFade--;
+          }
+        }
+        if (starCount > STAR_HARD_CAP) {
+          let toDrop = starCount - STAR_HARD_CAP;
+          for (let i = 0; i < particles.length && toDrop > 0; i++) {
+            if (particles[i].decay) continue;
+            particles.splice(i, 1);
+            i--;
+            toDrop--;
+          }
+        }
+
+        for (let i = cosmic.length - 1; i >= 0; i--) {
+          const ev = cosmic[i];
+
+          if (ev.type === 'shock') {
+            ev.r += (ev.maxR - ev.r) * 0.08 + 1.2;
+            ev.alpha -= 0.02;
+            if (ev.alpha <= 0) cosmic.splice(i, 1);
+            continue;
+          }
+
+          if (ev.type === 'quasar') {
+            if (tNow > ev.explodeAt) {
+              spawnBurst(ev.x, ev.y, 44, 7, true);
+              spawnShock(ev.x, ev.y, 260, true);
+              spawnShock(ev.x, ev.y, 150, false);
+              for (let k = 0; k < 3; k++) {
+                const a = Math.random() * Math.PI * 2;
+                const r = 60 + Math.random() * 60;
+                spawnStar(ev.x + Math.cos(a) * r, ev.y + Math.sin(a) * r);
+              }
+              cosmic.splice(i, 1);
+            }
+            continue;
+          }
+
+          if (ev.type === 'blackhole') {
+            if (ev.collapsing) {
+              const age = tNow - ev.collapsing;
+              ev.r = Math.max(0, ev.r - 0.6);
+              ev.spin += 0.22;
+              if (age > 900 || ev.r <= 0.5) {
+                cosmic.splice(i, 1);
+                continue;
+              }
+            }
+
+            if (!skyAlive) {
+              // глава сменилась: дыра доигрывает свой путь и уходит за край
+              const ox = ev.x - width / 2, oy = ev.y - height / 2;
+              const od = Math.hypot(ox, oy) || 1;
+              ev.vx += (ox / od) * 0.06;
+              ev.vy += (oy / od) * 0.06;
+            }
+            ev.x += ev.vx;
+            ev.y += ev.vy;
+            ev.spin += 0.04;
+
+            for (let j = particles.length - 1; j >= 0; j--) {
+              const p = particles[j];
+              const dx = ev.x - p.x;
+              const dy = ev.y - p.y;
+              const d2 = dx * dx + dy * dy;
+              if (d2 > 122500) continue; // 350px reach
+              const d = Math.sqrt(d2) || 0.001;
+              const pull = (350 - d) / 350;
+              if (p.star) {
+                p.bx += (dx / d) * pull * pull * 2.4;
+                p.by += (dy / d) * pull * pull * 2.4;
+                // Close enough: the star is caught and travels along with the hole
+                if (d < 150) {
+                  p.bx += ev.vx * 0.85;
+                  p.by += ev.vy * 0.85;
+                }
+              } else {
+                p.vx += (dx / d) * pull * 0.55;
+                p.vy += (dy / d) * pull * 0.55;
+              }
+            }
+
+            // The hole keeps hauling its catch long after leaving the screen
+            if (ev.x < -900 || ev.x > width + 900 || ev.y < -900 || ev.y > height + 900) {
+              cosmic.splice(i, 1);
+            }
+            continue;
+          }
+        }
+      }
+
+      refreshStarSprite(pColorRgba);
+
+      // Lookup so constellation edges survive stars being eaten or exploding
+      let starById = null;
+      if (skyFade > 0.01) {
+        starById = new Map();
+        for (let i = 0; i < particles.length; i++) {
+          if (particles[i].sid) starById.set(particles[i].sid, particles[i]);
+        }
+      }
+
       // 4. Update and Draw Particles
       for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
 
         // Apply Forces
-        p.vy -= pState.upwardForce * 0.1;
-        p.vx += (Math.random() - 0.5) * pState.randomJitter;
-        p.vy += (Math.random() - 0.5) * pState.randomJitter;
+        if (!p.meteor && !p.star) {
+          p.vy -= pState.upwardForce * 0.1;
+          p.vx += (Math.random() - 0.5) * pState.randomJitter;
+          p.vy += (Math.random() - 0.5) * pState.randomJitter;
+        }
 
         // Apply Orbit
         if (pState.centerGravity > 0.0001) {
@@ -471,7 +1325,7 @@ export default function Book() {
         }
 
         // Mutual Repulsion (The "Explosion" / Pushing apart logic)
-        for (let j = i - 1; j >= 0; j--) {
+        if (!p.meteor && !p.star) for (let j = i - 1; j >= 0; j--) {
           const p2 = particles[j];
           const dx = p.x - p2.x;
           const dy = p.y - p2.y;
@@ -495,7 +1349,7 @@ export default function Book() {
         const dx = p.x - mouseX;
         const dy = p.y - mouseY;
         const distSqM = dx*dx + dy*dy;
-        if (distSqM < 22500 && distSqM > 0.1) { // 150px radius
+        if (!p.meteor && !p.star && distSqM < 22500 && distSqM > 0.1) { // 150px radius
           const distM = Math.sqrt(distSqM);
           const forceM = (150 - distM) / 150;
           p.vx += (dx / distM) * forceM * 2;
@@ -506,10 +1360,26 @@ export default function Book() {
         }
 
         // Apply Velocity & Friction
-        p.x += p.vx;
-        p.y += p.vy;
-        p.vx *= pState.friction;
-        p.vy *= pState.friction;
+        if (!p.star) {
+          p.x += p.vx;
+          p.y += p.vy;
+        }
+        if (!p.meteor && !p.star) {
+          p.vx *= pState.friction;
+          p.vy *= pState.friction;
+        }
+
+        // Newborn stars brighten into place, crowded-out ones quietly leave
+        if (p.fadeIn && !p.leaving && p.alpha < p.targetAlpha) {
+          p.alpha = Math.min(p.targetAlpha, p.alpha + p.fadeIn);
+        }
+        if (p.fadingOut) {
+          p.alpha -= 0.02;
+          if (p.alpha <= 0) {
+            particles.splice(i, 1);
+            continue;
+          }
+        }
 
         // Decay logic for click sparks
         if (p.decay) {
@@ -520,17 +1390,73 @@ export default function Book() {
           }
         } else {
           // Smoothly adapt size to current era
-          p.size += (pState.targetSize - p.size) * 0.05;
-          // Screen wrap
-          if (p.x < -p.size*2) p.x = width + p.size*2;
-          if (p.x > width + p.size*2) p.x = -p.size*2;
-          if (p.y < -p.size*2) p.y = height + p.size*2;
-          if (p.y > height + p.size*2) p.y = -p.size*2;
+          const targetSize = (p.birthSize && era === 'constellation') ? p.birthSize : pState.targetSize;
+          p.size += (targetSize - p.size) * 0.05;
+          // Screen wrap (anchored stars must not teleport, it would tear the figure)
+          if (!p.star) {
+            if (p.x < -p.size*2) p.x = width + p.size*2;
+            if (p.x > width + p.size*2) p.x = -p.size*2;
+            if (p.y < -p.size*2) p.y = height + p.size*2;
+            if (p.y > height + p.size*2) p.y = -p.size*2;
+          }
         }
 
+        // Meteors keep a bright tail behind the head
+        if (p.meteor) {
+          const tailX = p.x - p.vx * 2.4;
+          const tailY = p.y - p.vy * 2.4;
+          const tailGrad = ctx.createLinearGradient(p.x, p.y, tailX, tailY);
+          tailGrad.addColorStop(0, `${pColorRgba}, ${Math.max(0, Math.min(1, p.alpha))})`);
+          tailGrad.addColorStop(1, 'transparent');
+          ctx.strokeStyle = tailGrad;
+          ctx.lineWidth = 1.8;
+          ctx.globalAlpha = 1;
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(tailX, tailY);
+          ctx.stroke();
+        }
+
+        // В Генезисе и Ренессансе фон чистый: никаких летающих искр,
+        // только камни на своём слое и глаза в темноте
+        const bgFade = era === 'cave' ? skyFade : 1;
+        if (era === 'gloom' && !p.decay) continue;
+        if (era === 'cave' && !p.decay && !p.meteor && bgFade <= 0.01) continue;
+
         // Draw Particle
-        ctx.beginPath();
         const gradRadius = Math.max(0.1, p.size * pState.glowMultiplier);
+
+        if (p.star) {
+          const twinkle = 0.7 + 0.3 * Math.sin(tNow * 0.002 + p.sid * 1.7);
+          ctx.globalAlpha = Math.max(0, Math.min(1, p.alpha * twinkle * bgFade));
+          ctx.drawImage(starSprite, p.x - gradRadius, p.y - gradRadius, gradRadius * 2, gradRadius * 2);
+
+          if (starById && p.links && pState.lineOpacity > 0.01) {
+            for (let l = p.links.length - 1; l >= 0; l--) {
+              const edge = p.links[l];
+              const other = starById.get(edge.sid);
+              if (!other) continue;
+              const lx = p.x - other.x;
+              const ly = p.y - other.y;
+              const dist2 = Math.sqrt(lx * lx + ly * ly);
+              if (dist2 > edge.len * 2.4 + 40) {
+                p.links.splice(l, 1);
+                continue;
+              }
+              ctx.beginPath();
+              ctx.strokeStyle = `${pColorRgba}, 1)`;
+              ctx.lineWidth = 0.6;
+              ctx.globalAlpha = Math.max(0, Math.min(1,
+                Math.min(p.alpha, other.alpha) * 2.2 * pState.lineOpacity * bgFade));
+              ctx.moveTo(p.x, p.y);
+              ctx.lineTo(other.x, other.y);
+              ctx.stroke();
+            }
+          }
+          continue;
+        }
+
+        ctx.beginPath();
         if (!isFinite(p.x) || !isFinite(p.y) || !isFinite(gradRadius)) {
           console.error("NAN DETECTED!", {x: p.x, y: p.y, size: p.size, glow: pState.glowMultiplier, vx: p.vx, vy: p.vy, pState});
         }
@@ -550,41 +1476,85 @@ export default function Book() {
         const alphaMultiplier = era === 'watercolor' ? 0.3
           : (era === 'constellation' && !p.decay) ? 0.7 + 0.3 * Math.sin(tNow * 0.002 + i * 1.7)
           : 1;
-        ctx.globalAlpha = Math.max(0, Math.min(1, p.alpha * alphaMultiplier));
+        ctx.globalAlpha = Math.max(0, Math.min(1, p.alpha * alphaMultiplier * bgFade));
         ctx.arc(p.x, p.y, gradRadius, 0, Math.PI * 2);
         ctx.fill();
 
-        // Draw constellation lines based on smoothly lerped lineOpacity
-        if (pState.lineOpacity > 0.01 && !p.decay) {
-          for (let j = i - 1; j >= 0; j--) {
-            const p2 = particles[j];
-            if (p2.decay) continue;
-            const d2x = p.x - p2.x;
-            const d2y = p.y - p2.y;
-            const distSq2 = d2x*d2x + d2y*d2y;
-            if (distSq2 < 14400) { // 120px radius
-              const dist2 = Math.sqrt(distSq2);
-              ctx.beginPath();
-              ctx.strokeStyle = `${pColorRgba}, 1)`;
-              ctx.lineWidth = 0.5;
-              ctx.globalAlpha = Math.max(0, (1 - dist2 / 120) * pState.lineOpacity);
-              ctx.moveTo(p.x, p.y);
-              ctx.lineTo(p2.x, p2.y);
-              ctx.stroke();
-            }
-          }
-          // Constellation lines also reach toward the cursor
-          const dMx = p.x - mouseX;
-          const dMy = p.y - mouseY;
-          const distSqML = dMx*dMx + dMy*dMy;
-          if (distSqML < 22500) {
-            const distML = Math.sqrt(distSqML);
+
+      }
+
+      // Draw Genesis cosmic events above the star field
+      if (skyFade > 0.01 && cosmic.length) {
+        for (let i = 0; i < cosmic.length; i++) {
+          const ev = cosmic[i];
+
+          if (ev.type === 'shock') {
+            ctx.globalCompositeOperation = 'screen';
             ctx.beginPath();
-            ctx.strokeStyle = `${pColorRgba}, 1)`;
-            ctx.lineWidth = 0.6;
-            ctx.globalAlpha = Math.max(0, Math.min(1, (1 - distML / 150) * pState.lineOpacity * 1.2));
-            ctx.moveTo(p.x, p.y);
-            ctx.lineTo(mouseX, mouseY);
+            ctx.strokeStyle = ev.tint ? 'rgba(255, 232, 196, 1)' : `${pColorRgba}, 1)`;
+            ctx.lineWidth = 2;
+            ctx.globalAlpha = Math.max(0, ev.alpha) * 0.7 * skyFade;
+            ctx.arc(ev.x, ev.y, ev.r, 0, Math.PI * 2);
+            ctx.stroke();
+            continue;
+          }
+
+          if (ev.type === 'quasar') {
+            const span = Math.max(1, ev.explodeAt - ev.bornAt);
+            const life = Math.max(0, Math.min(1, (tNow - ev.bornAt) / span));
+            const pulse = 0.7 + 0.3 * Math.sin(tNow * 0.02);
+            const coreR = (5 + life * 9) * pulse;
+
+            ctx.globalCompositeOperation = 'screen';
+            ctx.globalAlpha = skyFade;
+            const coreGrad = ctx.createRadialGradient(ev.x, ev.y, 0, ev.x, ev.y, coreR * 3);
+            coreGrad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+            coreGrad.addColorStop(0.25, 'rgba(198, 218, 255, 0.55)');
+            coreGrad.addColorStop(1, 'transparent');
+            ctx.fillStyle = coreGrad;
+            ctx.beginPath();
+            ctx.arc(ev.x, ev.y, coreR * 3, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.save();
+            ctx.translate(ev.x, ev.y);
+            ctx.rotate(ev.angle);
+            const jetLen = 36 + life * 95;
+            const jetGrad = ctx.createLinearGradient(0, -jetLen, 0, jetLen);
+            jetGrad.addColorStop(0, 'transparent');
+            jetGrad.addColorStop(0.5, `rgba(190, 220, 255, ${0.45 * pulse})`);
+            jetGrad.addColorStop(1, 'transparent');
+            ctx.fillStyle = jetGrad;
+            ctx.fillRect(-1.6, -jetLen, 3.2, jetLen * 2);
+            ctx.restore();
+            continue;
+          }
+
+          if (ev.type === 'blackhole') {
+            const diskR = ev.r * 2.8;
+            ctx.globalCompositeOperation = 'screen';
+            ctx.globalAlpha = skyFade;
+            const fedGlow = ev.fedAt ? Math.max(0, 1 - (tNow - ev.fedAt) / 600) : 0;
+            const diskGrad = ctx.createRadialGradient(ev.x, ev.y, ev.r * 0.9, ev.x, ev.y, diskR);
+            diskGrad.addColorStop(0, `rgba(255, ${176 + Math.round(60 * fedGlow)}, 96, ${0.7 + 0.3 * fedGlow})`);
+            diskGrad.addColorStop(0.5, 'rgba(150, 120, 255, 0.28)');
+            diskGrad.addColorStop(1, 'transparent');
+            ctx.fillStyle = diskGrad;
+            ctx.beginPath();
+            ctx.arc(ev.x, ev.y, diskR, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(ev.x, ev.y, ev.r, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.globalCompositeOperation = 'screen';
+            ctx.strokeStyle = 'rgba(255, 222, 184, 0.85)';
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.ellipse(ev.x, ev.y, ev.r * 1.9, ev.r * 0.55, ev.spin, 0, Math.PI * 2);
             ctx.stroke();
           }
         }
@@ -646,8 +1616,15 @@ export default function Book() {
     }
   };
 
+  useEffect(() => { playPaperSoundRef.current = playPaperSound; });
+
   const handleNext = useCallback((isAuto = false) => {
+    if (holdingGem) return;
     if (isAuto !== true && isPlaying) setIsPlaying(false);
+    if (forwardLocked) {
+      refuseForward();
+      return;
+    }
     if (currentIndex < drawings.length - 1 && !isFlipping) {
       playPaperSound();
       setPhotoFlipped(false);
@@ -661,9 +1638,14 @@ export default function Book() {
     } else if (currentIndex >= drawings.length - 1 && isPlaying) {
       setIsPlaying(false); // Stop autoplay at the end
     }
-  }, [currentIndex, drawings.length, isFlipping, isPlaying]);
+  }, [currentIndex, drawings.length, isFlipping, isPlaying, forwardLocked, refuseForward, holdingGem]);
+
+  useEffect(() => {
+    handleNextRef.current = handleNext;
+  }, [handleNext]);
 
   const handlePrev = useCallback((isAuto = false) => {
+    if (holdingGem) return;
     if (isAuto !== true && isPlaying) setIsPlaying(false);
     if (currentIndex > 0 && !isFlipping) {
       playPaperSound();
@@ -698,11 +1680,135 @@ export default function Book() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleNext, handlePrev]);
 
+  // Прыжок по закладке: под пачкой сразу лежит нужный разворот, а поверх него
+  // веером улетают несколько листов — дорога до главы становится видимой
+  const RUSH_MAX = 5;
+  const RUSH_STEP = 120;
+  const RUSH_TIME = 620;
+
+  const jumpTo = (target) => {
+    // Пачка должна долететь: иначе второе нажатие рвёт анимацию на середине
+    if (isFlipping || rush || dragState.isDragging || dragState.isReleasing) return;
+    if (target === currentIndex) return;
+    const dir = target > currentIndex ? 'next' : 'prev';
+    const distance = Math.abs(target - currentIndex);
+    const count = Math.min(RUSH_MAX, distance);
+    const from = currentIndex;
+
+    const sheets = [];
+    for (let i = 0; i < count; i++) {
+      const step = Math.round(((i + 1) * distance) / count);
+      const idx = dir === 'next'
+        ? Math.min(from + step - 1, drawings.length - 1)
+        : Math.max(from - step + 1, 0);
+      const partner = dir === 'next'
+        ? Math.min(idx + 1, drawings.length - 1)
+        : Math.max(idx - 1, 0);
+      sheets.push({ front: drawings[idx], back: drawings[partner] });
+    }
+
+    setCurrentIndex(target);
+    setRush({ dir, sheets });
+
+    rushTimers.current.forEach(clearTimeout);
+    rushTimers.current = sheets.map((_, i) =>
+      setTimeout(() => playPaperSound(), i * RUSH_STEP)
+    );
+    rushTimers.current.push(
+      setTimeout(() => setRush(null), (count - 1) * RUSH_STEP + RUSH_TIME + 120)
+    );
+  };
+
+  useEffect(() => () => rushTimers.current.forEach(clearTimeout), []);
+
+  // Двойное нажатие на закладку: к самой дальней работе главы, куда уже дошли.
+  // Одиночное по-прежнему открывает главу с начала, поэтому его придерживаем.
+  const bookmarkTapRef = useRef({ id: null, timer: null });
+
+  const deepestSeenOfChapter = (chapterId, fallbackIndex) => {
+    let deepest = -1;
+    drawings.forEach((d, i) => {
+      if (d.chapterId !== chapterId) return;
+      if (cheat || progress.seen[d.id]) deepest = i;
+    });
+    return deepest >= 0 ? deepest : fallbackIndex;
+  };
+
+  const onBookmarkTap = (chap) => {
+    const tap = bookmarkTapRef.current;
+    if (tap.id === chap.id && tap.timer) {
+      clearTimeout(tap.timer);
+      bookmarkTapRef.current = { id: null, timer: null };
+      jumpTo(deepestSeenOfChapter(chap.id, chap.index));
+      return;
+    }
+    if (tap.timer) clearTimeout(tap.timer);
+    const timer = setTimeout(() => {
+      bookmarkTapRef.current = { id: null, timer: null };
+      jumpTo(chap.index);
+    }, 260);
+    bookmarkTapRef.current = { id: chap.id, timer };
+  };
+
+  useEffect(() => () => {
+    if (bookmarkTapRef.current.timer) clearTimeout(bookmarkTapRef.current.timer);
+  }, []);
+
+  // Промах по пустому космосу отзывается своим звуком
+  useEffect(() => {
+    const list = decor && decor.sfx ? decor.sfx.missDark : null;
+    if (!list || !list.length) { missPoolRef.current = null; return; }
+    const base = import.meta.env.BASE_URL;
+    missPoolRef.current = list.map((path) => {
+      const copies = Array.from({ length: 2 }, () => {
+        const audio = new Audio(base + path.split('/').map(encodeURIComponent).join('/'));
+        audio.volume = 0.45;
+        audio.preload = 'auto';
+        return audio;
+      });
+      return { copies, i: 0 };
+    });
+  }, [decor]);
+
+  const playMissRef = useRef(() => {});
+  useEffect(() => {
+    playMissRef.current = () => {
+      const pool = missPoolRef.current;
+      if (!pool || !pool.length || !soundEnabled) return;
+      const group = pool[Math.floor(Math.random() * pool.length)];
+      const audio = group.copies[group.i];
+      group.i = (group.i + 1) % group.copies.length;
+      try { audio.currentTime = 0; audio.play().catch(() => {}); } catch (err) { /* тишина */ }
+    };
+  }, [soundEnabled]);
+
+  // Габарит балки задаёт первая стадия: следующие шире на десяток пикселей,
+  // и без этого камень толстел бы прямо от удара
+  useEffect(() => {
+    if (!decor || !decor.seam || !decor.seam.length) return;
+    const probe = new Image();
+    probe.onload = () => {
+      if (probe.naturalWidth && probe.naturalHeight) {
+        setSeamAspect(probe.naturalWidth / probe.naturalHeight);
+      }
+    };
+    probe.src = `${import.meta.env.BASE_URL}${decor.seam[0]}`;
+
+    // остальные стадии подгружаем заранее: иначе первый удар ждёт картинку
+    decor.seam.slice(1).forEach((path) => {
+      const img = new Image();
+      img.src = `${import.meta.env.BASE_URL}${path}`;
+    });
+  }, [decor]);
+
   const resetDragState = () => {
     setDragState({ isDragging: false, angle: 0, direction: null, isReleasing: false, releaseDuration: 800 });
   };
 
   const handlePointerDown = (e) => {
+    if (holdingGem || rush) return;
+    // во время испытания Ренессанса по странице чертят, а не листают её
+    if (trialActive && currentChapterId === 'chapter-3') return;
     if (e.button !== 0 && e.pointerType === 'mouse') return;
     if (isFlipping || dragState.isReleasing) return;
 
@@ -767,6 +1873,12 @@ export default function Book() {
         if (R < 0 && deltaX < 0) return;
 
         direction = R > 0 ? 'next' : 'prev';
+        // Запертая глава не показывает даже краешка: страницу не поднять вовсе
+        if (direction === 'next' && forwardLocked) {
+          refuseForward();
+          resetDragState();
+          return;
+        }
         if (direction === 'next' && currentIndex >= drawings.length - 1) {
           resetDragState();
           return;
@@ -852,6 +1964,11 @@ export default function Book() {
       else complete = angle >= 90;
     }
 
+    if (direction === 'next' && forwardLocked) {
+      complete = false;
+      refuseForward();
+    }
+
     const currentAbs = Math.abs(angle);
     const remaining = complete ? 180 - currentAbs : currentAbs;
     const duration = Math.round(Math.max(250, Math.min(700, remaining * 5)));
@@ -902,7 +2019,7 @@ export default function Book() {
 
   if (loading) {
     return (
-      <div className="book-container">
+      <div className={`book-container ${trialActive && tamed ? 'hunting' : ''}`}>
         <RefreshCw className="animate-spin" size={32} />
         <span style={{ marginTop: '15px', color: 'var(--color-text-muted)' }}>Загрузка галереи...</span>
       </div>
@@ -934,7 +2051,7 @@ export default function Book() {
   const chaptersList = [];
   drawings.forEach((d, i) => {
     if (d.type === 'chapter') {
-      chaptersList.push({ title: d.chapterTitle || d.title, index: i });
+      chaptersList.push({ title: d.chapterTitle || d.title, index: i, id: d.id });
     }
   });
 
@@ -967,6 +2084,7 @@ export default function Book() {
       return (
         <div className={`page-face ${faceClass} chapter-page-left`} style={themeVarsFor(drawing)}>
           <div className="chapter-overlay" key="chapter-overlay"></div>
+          <ChapterOrnament chapterId={drawing.id} variant="mark" key="chapter-ornament" />
           <h2 key="chapter-title">{drawing.title}</h2>
         </div>
       );
@@ -990,11 +2108,30 @@ export default function Book() {
     const isFlippedPhoto = photoFlipped && drawings[currentIndex] && drawing.id === drawings[currentIndex].id;
     return (
       <div className={`page-face ${faceClass} image-page`} style={themeVarsFor(drawing)}>
-        <div className={`photo-wrapper ${ENABLE_PHOTO_FLIP ? 'flippable' : ''}`} key="photo-wrapper">
-          <div className="photo-corner tl"></div>
-          <div className="photo-corner tr"></div>
-          <div className="photo-corner bl"></div>
-          <div className="photo-corner br"></div>
+        <div
+          className={`photo-wrapper ${ENABLE_PHOTO_FLIP ? 'flippable' : ''} ${COSMIC_CHAPTERS.includes(drawing.chapterTitle) ? 'cosmic' : ''}`}
+          key="photo-wrapper"
+          style={drawing.w && drawing.h ? { aspectRatio: `${drawing.w} / ${drawing.h}` } : undefined}
+        >
+          {drawing.chapterId === 'chapter-3' && !progress.done['chapter-3'] && (
+            <PaintingEyes
+              title={drawing.title}
+              onEscape={() => setEyeEscapes((v) => v + 1)}
+            />
+          )}
+
+          {COSMIC_CHAPTERS.includes(drawing.chapterTitle) ? (
+            <CornerConstellations seed={drawing.id} />
+          ) : CRYSTAL_CHAPTERS.includes(drawing.chapterTitle) ? (
+            <CornerCrystals seed={drawing.id} />
+          ) : (
+            <>
+              <div className="photo-corner tl"></div>
+              <div className="photo-corner tr"></div>
+              <div className="photo-corner bl"></div>
+              <div className="photo-corner br"></div>
+            </>
+          )}
           <div className={`photo-flipper ${isFlippedPhoto ? 'flipped' : ''}`}>
             <img
               src={`${import.meta.env.BASE_URL}${drawing.image}`}
@@ -1002,6 +2139,7 @@ export default function Book() {
               className="drawing-image"
               draggable={false}
               onLoad={(e) => {
+                if (drawing.w && drawing.h) return;
                 const wrapper = e.target.closest('.photo-wrapper');
                 if (wrapper && e.target.naturalWidth && e.target.naturalHeight) {
                   wrapper.style.aspectRatio = `${e.target.naturalWidth} / ${e.target.naturalHeight}`;
@@ -1025,7 +2163,7 @@ export default function Book() {
     );
   };
 
-  const renderRightFace = (drawing, isBack = false) => {
+  const renderRightFace = (drawing, isBack = false, isStatic = false) => {
     if (!drawing) return null;
     const faceClass = isBack ? 'back' : 'front';
 
@@ -1049,6 +2187,7 @@ export default function Book() {
       return (
         <div className={`page-face ${faceClass} chapter-page-right`} style={themeVarsFor(drawing)}>
           <div className="chapter-overlay" key="chapter-overlay"></div>
+          <ChapterOrnament chapterId={drawing.id} variant="none" key="chapter-ornament" />
           <p className="chapter-subtitle" key="chapter-subtitle">{drawing.description}</p>
         </div>
       );
@@ -1062,8 +2201,12 @@ export default function Book() {
       );
     }
     // Normal Content Page
+    const guardSeam = seamVisible && drawings[seamIndex] && drawing.id === drawings[seamIndex].id;
     return (
-      <div className={`page-face ${faceClass} content-page`} style={themeVarsFor(drawing)}>
+      <div
+        className={`page-face ${faceClass} content-page ${guardSeam ? 'seam-guard' : ''}`}
+        style={themeVarsFor(drawing)}
+      >
         <div className="page-header">
           <h2>{drawing.title}</h2>
           {(drawing.date || drawing.year) && (
@@ -1074,13 +2217,74 @@ export default function Book() {
           <p className="page-description">{drawing.description}</p>
           {drawing.story && <p className="page-story">{drawing.story.replace(/\.\s*$/, '')}</p>}
         </div>
+
+        {guardSeam && decor && seamStage < SEAM_STAGES && (
+          <img
+            ref={isStatic ? seamRef : null}
+            className={`page-seam ${seamHits ? (seamHits % 2 ? 'struck-a' : 'struck-b') : ''}`}
+            style={seamAspect ? { aspectRatio: String(seamAspect) } : undefined}
+            src={`${import.meta.env.BASE_URL}${decor.seam[Math.min(seamStage, decor.seam.length - 1)]}`}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+          />
+        )}
       </div>
     );
   };
 
+  const renaissanceSeen = INTERACTIVE_MODE
+    ? drawings.reduce((n, d) => n + (d.chapterId === 'chapter-3' && progress.seen[d.id] ? 1 : 0), 0)
+    : 0;
+
   return (
     <div className="book-container">
       <canvas ref={canvasRef} className="background-canvas" />
+
+      <div className={`chapter-blackout ${blackout ? 'on' : ''}`} aria-hidden="true"></div>
+
+      <RenaissanceEyes
+        active={INTERACTIVE_MODE && (currentChapterId === 'chapter-3' || chapterIdOf(drawings[seamIndex]) === 'chapter-3')}
+        groups={eyeEscapes}
+        scatter={eyeScatter}
+      />
+
+      <GenesisTrial
+        active={INTERACTIVE_MODE && (currentChapterId === 'chapter-2' || chapterIdOf(drawings[seamIndex]) === 'chapter-2') && Boolean(decor)}
+        trialPage={seamVisible}
+        bookRef={bookRef}
+        seamRef={seamRef}
+        seamStage={seamStage}
+        manifest={decor}
+        soundEnabled={soundEnabled}
+        onHoldChange={setHoldingGem}
+        onSeamHit={() => { setSeamStage((v) => v + 1); setSeamHits((v) => v + 1); }}
+        onComplete={() => completeChallenge(currentChapterId)}
+      />
+
+      <EyeTrial
+        active={trialActive && currentChapterId === 'chapter-3'}
+        bookRef={bookRef}
+        onComplete={() => completeChallenge('chapter-3')}
+        onMiss={() => {
+          // промах отбрасывает к маяку главы: там всё уже сказано
+          const beacon = drawings.findIndex((d) => d.title === BEACON_TITLE);
+          if (beacon >= 0) hurlTo(beacon);
+        }}
+      />
+
+      <TrialOverlay
+        active={trialActive && currentChapterId === 'chapter-1'}
+        armed={tamed}
+        bookRef={bookRef}
+        primaryRgb={drawings[themeIndex]?.eraTheme?.primaryRgb || '139, 157, 250'}
+        onComplete={() => {
+          completeChallenge(currentChapterId);
+          setTimeout(() => {
+            if (handleNextRef.current) handleNextRef.current();
+          }, 300);
+        }}
+      />
 
       {/* 3D Book */}
       <div className="book-wrapper" ref={bookRef}>
@@ -1088,23 +2292,37 @@ export default function Book() {
         <div className="book-bookmarks" style={{ opacity: isCoverClosed ? 0 : 1, pointerEvents: isCoverClosed ? 'none' : 'auto', transition: isCoverClosed ? 'opacity 0.2s ease 0s' : 'opacity 0.6s ease 0.8s' }}>
           {chaptersList.map((chap, i) => {
             const isActive = currentIndex >= chap.index && (i === chaptersList.length - 1 || currentIndex < chaptersList[i+1].index);
+            const locked = INTERACTIVE_MODE && unlockMap[chap.id] === false;
+            if (locked && justUnlocked !== chap.id) return null;
             return (
-              <div 
-                key={i} 
-                className={`bookmark ${isActive ? 'active' : ''}`}
+              <div
+                key={i}
+                className={`bookmark ${isActive ? 'active' : ''} ${locked ? 'locked' : ''} ${justUnlocked === chap.id ? 'snapping' : ''}`}
                 onClick={() => {
-                  playPaperSound();
-                  setCurrentIndex(chap.index);
+                  if (locked) {
+                    refuseForward();
+                    return;
+                  }
+                  onBookmarkTap(chap);
                 }}
+                title={`${chap.title} — двойное нажатие уводит к дальнему краю прочитанного`}
               >
                 {chap.title}
+                {(locked || justUnlocked === chap.id) && (
+                  <span className="bookmark-chain" aria-hidden="true">
+                    <span className="chain-link"></span>
+                    <span className="chain-link"></span>
+                    <span className="chain-link"></span>
+                  </span>
+                )}
               </div>
             );
           })}
         </div>
 
         <div 
-          className={`book ${isFlipping ? 'flipping' : ''} ${(dragState.isDragging || dragState.isReleasing) ? 'dragging' : ''} ${isCoverClosed ? 'closed' : ''}`}
+          className={`book ${isFlipping ? 'flipping' : ''} ${(dragState.isDragging || dragState.isReleasing) ? 'dragging' : ''} ${isCoverClosed ? 'closed' : ''} ${forwardLocked ? 'forward-locked' : ''} ${straining ? 'straining' : ''}`}
+          data-lock-nudge={lockNudge}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
@@ -1114,7 +2332,7 @@ export default function Book() {
           
             {/* Static Left Page (Shows underneath drawing during prev flip) */}
             {staticLeftDrawing && !staticLeftDrawing.isCover && (
-              <div className="page left-page" style={{ 
+              <div className="page left-page" key={`left-${staticLeftDrawing.id}`} style={{ 
                 opacity: isCoverClosed ? 0 : 1, 
                 visibility: isCoverClosed ? 'hidden' : 'visible',
                 transition: isCoverClosed ? 'opacity 0.2s ease 0s, visibility 0s linear 0.2s' : 'opacity 0.6s ease 0.3s, visibility 0s linear 0s' 
@@ -1124,8 +2342,8 @@ export default function Book() {
             )}
 
           {/* Static Right Page (Shows underneath description during next flip) */}
-          <div className="page right-page">
-            {renderRightFace(staticRightDrawing, false)}
+          <div className="page right-page" key={`right-${staticRightDrawing.id}`}>
+            {renderRightFace(staticRightDrawing, false, true)}
           </div>
 
           {/* Dynamic Drag/Flipping Page (Next) */}
@@ -1184,29 +2402,41 @@ export default function Book() {
             </div>
           )}
 
+          {/* Пачка листов, улетающая при переходе по закладке */}
+          {rush && rush.sheets.map((sheet, i) => (
+            <div
+              key={`rush-${i}`}
+              className={`page ${rush.dir === 'next' ? 'right-page' : 'left-page'} flip-page flip-anim rush-page`}
+              style={{
+                transform: rush.dir === 'next' ? 'rotateY(0deg)' : 'rotateY(180deg)',
+                animation: `${rush.dir === 'next' ? 'flipToLeft' : 'flipToRight'} ${RUSH_TIME}ms forwards cubic-bezier(0.42, 0.02, 0.35, 1), rushVanish ${RUSH_TIME}ms forwards linear`,
+                animationDelay: `${i * RUSH_STEP}ms`,
+                zIndex: 40 + (rush.sheets.length - i)
+              }}
+            >
+              {rush.dir === 'next' ? (
+                <>
+                  {renderRightFace(sheet.front, false)}
+                  {renderLeftFace(sheet.back, true)}
+                </>
+              ) : (
+                <>
+                  {renderLeftFace(sheet.front, false)}
+                  {renderRightFace(sheet.back, true)}
+                </>
+              )}
+            </div>
+          ))}
+
         </div>
       </div>
 
-      {/* Side Navigation Arrows */}
-      <div className="side-nav-container" style={{ opacity: isCoverClosed ? 0 : 1, pointerEvents: isCoverClosed ? 'none' : 'auto', transition: isCoverClosed ? 'opacity 0.2s ease 0s' : 'opacity 0.6s ease 0.8s' }}>
-        <button 
-          className="side-nav-btn prev" 
-          onClick={handlePrev} 
-          disabled={currentIndex === 0 || isFlipping}
-        >
-          <ChevronLeft size={48} />
-        </button>
-        <button 
-          className="side-nav-btn next" 
-          onClick={handleNext} 
-          disabled={currentIndex === drawings.length - 1 || isFlipping}
-        >
-          <ChevronRight size={48} />
-        </button>
-      </div>
-
       {/* Control Buttons */}
-      <div className="controls-panel" style={{ opacity: isCoverClosed ? 0 : 1, pointerEvents: isCoverClosed ? 'none' : 'auto', transition: isCoverClosed ? 'opacity 0.2s ease 0s' : 'opacity 0.6s ease 0.8s' }}>
+      <div
+        className={`panel-dock ${panelOpen ? 'open' : ''}`}
+        style={{ opacity: isCoverClosed ? 0 : 1, pointerEvents: isCoverClosed ? 'none' : 'auto' }}
+      >
+        <div className="controls-panel">
         <button 
           className="control-btn nav-btn" 
           onClick={handlePrev} 
@@ -1248,6 +2478,15 @@ export default function Book() {
           title={soundEnabled ? "Выключить звук" : "Включить звук"}
         >
           {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+        </button>
+        </div>
+
+        <button
+          className="panel-toggle"
+          onClick={() => setPanelOpen((v) => !v)}
+          title={panelOpen ? 'Убрать управление' : 'Выдвинуть управление'}
+        >
+          <ChevronDown size={20} />
         </button>
       </div>
 
