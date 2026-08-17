@@ -1,0 +1,7 @@
+/* Пространство за гранью лежит позади книги и никогда не ловит мышь */
+.beyond-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}

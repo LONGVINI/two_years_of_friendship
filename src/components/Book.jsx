@@ -12,6 +12,9 @@ import GlyphText from './GlyphText';
 import PentagramLayer from './PentagramLayer';
 import ScreenVeins from './ScreenVeins';
 import GardenLayer from './GardenLayer';
+import BeyondLayer from './BeyondLayer';
+import CornerShards from './CornerShards';
+import BrokenSheet from './BrokenSheet';
 import BeyondGate from './BeyondGate';
 import CornerEyes from './CornerEyes';
 import TrialOverlay from './TrialOverlay';
@@ -38,6 +41,7 @@ const ENABLE_PHOTO_FLIP = false;
 const COSMIC_CHAPTERS = ['Тёмная тропа'];
 const CRYSTAL_CHAPTERS = ['Генезис'];
 const EYE_HOLD_CHAPTERS = ['Ренессанс'];
+const SHARD_CHAPTERS = ['За гранью'];
 
 export default function Book() {
   const [drawings, setDrawings] = useState([]);
@@ -266,6 +270,8 @@ export default function Book() {
   const [gardenBloom, setGardenBloom] = useState(false);
   // Граница глав: сцена с огоньком, стеной и чистой книгой
   const [beyondScene, setBeyondScene] = useState(false);
+  // Белизна финала живёт дольше самой сцены: книга меняется под ней
+  const [whiteVeil, setWhiteVeil] = useState(0);
   const [bookDrift, setBookDrift] = useState(0);
   const [blackout, setBlackout] = useState(false);
   // Прощание знака: слой держится ещё несколько секунд после начертанного глаза,
@@ -402,15 +408,19 @@ export default function Book() {
     const from = Math.abs(fromAngle || 0);
     const lift = Math.round(Math.max(500, (52 - from) * 27));
 
-    // лист трогается неспешно и у верхней точки замирает
+    // Лист сперва встаёт туда, где он сейчас, и только следующим кадром идёт
+    // вверх: иначе при нажатии он появляется уже поднятым, без всякого хода
     setDragState({
       isDragging: false,
-      angle: -52,
+      angle: -from,
       direction: 'next',
       isReleasing: true,
       releaseDuration: lift,
       releaseEase: 'cubic-bezier(0.22, 0.55, 0.25, 1)'
     });
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      setDragState((prev) => (prev.direction === 'next' ? { ...prev, angle: -52 } : prev));
+    }));
 
     // из-под приподнятого края выбирается огонёк
     const sparkAt = lift + 120;
@@ -2262,6 +2272,15 @@ export default function Book() {
         </div>
       );
     }
+    // Последний лист: пустая надорванная бумага, без работы и подписи
+    if (drawing.type === 'broken') {
+      return (
+        <div className={`page-face ${faceClass} broken-page`} style={themeVarsFor(drawing)}>
+          <BrokenSheet seed={drawing.id} side="left" />
+          <p className="broken-words">{drawing.leftWords}</p>
+        </div>
+      );
+    }
     // Mini-games placeholders
     if (drawing.type === 'scratch') {
       return (
@@ -2315,6 +2334,8 @@ export default function Book() {
             <CornerCrystals seed={drawing.id} />
           ) : EYE_HOLD_CHAPTERS.includes(drawing.chapterTitle) ? (
             <CornerEyes seed={drawing.id} avert={eyeScatter && drawing.title === BEACON_TITLE} />
+          ) : SHARD_CHAPTERS.includes(drawing.chapterTitle) ? (
+            <CornerShards seed={drawing.id} />
           ) : (
             <>
               <div className="photo-corner tl"></div>
@@ -2380,6 +2401,14 @@ export default function Book() {
           <div className="chapter-overlay" key="chapter-overlay"></div>
           <ChapterOrnament chapterId={drawing.id} variant="none" key="chapter-ornament" />
           <p className="chapter-subtitle" key="chapter-subtitle">{drawing.description}</p>
+        </div>
+      );
+    }
+    if (drawing.type === 'broken') {
+      return (
+        <div className={`page-face ${faceClass} broken-page`} style={themeVarsFor(drawing)}>
+          <BrokenSheet seed={drawing.id} side="right" />
+          <p className="broken-words">{drawing.description}</p>
         </div>
       );
     }
@@ -2480,6 +2509,11 @@ export default function Book() {
 
       {beaconCry && <div className="beacon-cry" key={beaconCry}>{beaconCry}</div>}
 
+      <BeyondLayer
+        active={INTERACTIVE_MODE && !beyondScene && currentChapterId === 'chapter-interactive'}
+        soundEnabled={soundEnabled}
+      />
+
       <GardenLayer
         bookRef={bookRef}
         soundEnabled={soundEnabled}
@@ -2502,17 +2536,26 @@ export default function Book() {
         }}
         onComplete={() => {
           // сцена дошла до белизны: глава взята, и открывается уже другая книга.
-          // Страница шелестит под белым, самого перелистывания не видно
-          if (playPaperSoundRef.current) playPaperSoundRef.current();
+          // Белизна остаётся поверх всего, и книга меняется скрытно под ней
+          setWhiteVeil(1);
           completeChallenge(GARDEN_CHAPTER);
           setGardenBloom(true);
-          const beyond = drawings.findIndex((d) => d.chapterId === 'chapter-interactive');
+          // нужен разделитель главы — тот самый лист с надписью, а не первая работа
+          const beyond = drawings.findIndex((d) => d.chapterTitle === 'За гранью');
           if (beyond >= 0) setCurrentIndex(beyond);
           setBookDrift(0);
           setBeyondScene(false);
           lockScene(false);
+          // за белым слышно, как переворачивают лист, и лишь потом она тает
+          setTimeout(() => { if (playPaperSoundRef.current) playPaperSoundRef.current(); }, 420);
+          setTimeout(() => setWhiteVeil(2), 1500);
+          setTimeout(() => setWhiteVeil(0), 4200);
         }}
       />
+
+      {whiteVeil > 0 && (
+        <div className={`beyond-veil ${whiteVeil === 2 ? 'gone' : ''}`} aria-hidden="true" />
+      )}
 
       <ScreenVeins
         active={INTERACTIVE_MODE && (currentChapterId === 'chapter-3' || chapterIdOf(drawings[seamIndex]) === 'chapter-3')}

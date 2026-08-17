@@ -1140,3 +1140,18 @@
   70% { opacity: 1; letter-spacing: 0.3em; }
   100% { opacity: 0; letter-spacing: 0.42em; filter: blur(10px); }
 }
+
+/* Белизна финала: держится поверх книги и тает сама, уже после смены страницы */
+.beyond-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 450;
+  pointer-events: none;
+  background: rgb(238, 234, 228);
+  opacity: 1;
+  transition: opacity 2.6s ease;
+}
+
+.beyond-veil.gone {
+  opacity: 0;
+}

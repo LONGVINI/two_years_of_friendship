@@ -1,0 +1,26 @@
+/* Осколки лежат на самой работе и едут вместе с ней при перелистывании:
+   то же место и тот же уровень, что занимал скотч в остальных главах */
+.photo-shard {
+  position: absolute;
+  width: 96px;
+  height: 38px;
+  z-index: 5;
+  pointer-events: none;
+  overflow: visible;
+  filter: drop-shadow(2px 3px 2px rgba(6, 4, 10, 0.5));
+}
+
+.photo-shard.tl { top: -12px; left: -40px; transform: rotate(calc(-45deg + var(--shard-tilt, 0deg))) scale(var(--shard-scale, 1)); }
+.photo-shard.tr { top: -12px; right: -40px; transform: rotate(calc(45deg + var(--shard-tilt, 0deg))) scale(var(--shard-scale, 1)); }
+.photo-shard.br { bottom: -12px; right: -40px; transform: rotate(calc(-45deg + var(--shard-tilt, 0deg))) scale(var(--shard-scale, 1)); }
+.photo-shard.bl { bottom: -12px; left: -40px; transform: rotate(calc(45deg + var(--shard-tilt, 0deg))) scale(var(--shard-scale, 1)); }
+
+/* блик ползёт по стеклу, будто источник света где-то за страницей */
+.shard-flare {
+  animation: shardFlare 7s ease-in-out infinite alternate;
+}
+
+@keyframes shardFlare {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(146px); }
+}

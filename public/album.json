@@ -1979,7 +1979,7 @@
     "id": "chapter-interactive",
     "type": "chapter",
     "title": "За гранью",
-    "description": "Медузы, пузыри и рисунки, которые отвечают",
+    "description": "Прошедшие тернистый путь обретают силу, что способна сеять разруху и даровать надежду",
     "eraTheme": {
       "bgStart": "#140c14",
       "bgEnd": "#080508",
@@ -2028,5 +2028,21 @@
     "chapterTitle": "За гранью",
     "w": 904,
     "h": 1280
+  },
+  {
+    "id": "beyond-broken",
+    "type": "broken",
+    "title": "",
+    "description": "Но тебя затянуло слишком далеко",
+    "eraTheme": {
+      "bgStart": "#140c14",
+      "bgEnd": "#080508",
+      "primary": "#fa8bfa",
+      "primaryRgb": "250, 139, 250",
+      "glass": "rgba(31, 17, 31, 0.65)"
+    },
+    "chapterId": "chapter-interactive",
+    "chapterTitle": "За гранью",
+    "leftWords": "Будущее ещё не наступило..."
   }
 ]

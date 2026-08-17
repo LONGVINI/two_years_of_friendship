@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './BeyondGate.css';
+import { createBeyondMusic } from './beyondMusic';
 
 // Дорога за грань. Огонёк — дух: он идёт сам, плавно, по своему пути, и первым
 // делом уходит прочь от книги. По дороге стоят слова: он подлетает, освещает
@@ -13,7 +14,7 @@ const BEAM_SLACK = 200;           // на столько луч может не 
 const CAM_SPEED = 4.6;            // как быстро дорога уходит назад
 const MARK_STEP = 4200;          // между словами долгая дорога
 const TALE_DELAY = 6000;         // сколько идём молча, прежде чем проступит мысль
-const TALE_LIFE = 7200;          // сколько мысль держится на экране
+const TALE_LIFE = 10500;         // сколько мысль держится на экране
 const MARK_GATE = TALE_DELAY + TALE_LIFE;  // раньше этого слово из тьмы не выйдет
 
 // Слова дороги и сколько ударов держит каждое: дальше только тяжелее
@@ -40,8 +41,9 @@ export const TALE = [
 const WALL_GUARDS = 16;
 
 export const BEYOND_WORDS = [
-  'всё это было не зря',
-  'лучшее ещё не нарисовано'
+  'Усилия не напрасны',
+  'Ещё многое не нарисовано',
+  'Но ты уже здесь'
 ];
 
 export const LOST_WORDS = ['Свет может погаснуть, но не стоит всё бросать'];
@@ -62,6 +64,7 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
   const failRef = useRef(onFail);
   const driftRef = useRef(onDrift);
   const soundRef = useRef(soundEnabled);
+  const musicRef = useRef(null);
   const bookHost = useRef(bookRef);
 
   useEffect(() => { activeRef.current = active; if (active) setAlive(true); }, [active]);
@@ -69,6 +72,9 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
   useEffect(() => { failRef.current = onFail; }, [onFail]);
   useEffect(() => { driftRef.current = onDrift; }, [onDrift]);
   useEffect(() => { soundRef.current = soundEnabled; }, [soundEnabled]);
+  useEffect(() => {
+    if (musicRef.current) musicRef.current.setMuted(!soundEnabled);
+  }, [soundEnabled]);
   useEffect(() => { bookHost.current = bookRef; }, [bookRef]);
   useEffect(() => () => taleTimers.current.forEach(clearTimeout), []);
 
@@ -83,7 +89,7 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
     taleTimers.current = [
       // появление, потом гашение на ходу, и только затем строка снимается
       setTimeout(() => setTaleOn(true), 30),
-      setTimeout(() => setTaleFade(true), TALE_LIFE - 1900),
+      setTimeout(() => setTaleFade(true), TALE_LIFE - 2400),
       setTimeout(() => { setTale(''); setTaleOn(false); setTaleFade(false); }, TALE_LIFE)
     ];
   }, []);
@@ -126,11 +132,21 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
       wallX: 0,
       wallHp: 90,
       wallHit: 0,
+      riftGlow: 0,
+      outro: null,
+      whiteAt: 0,
+      skip: false,
       born: null,
       homeX: 0,
       lamp: { x: 0, y: 0, glow: 0, r: 2, hitAt: 0 }
     };
     const mouse = { x: -999, y: -999 };
+
+    // трек собирается на месте и идёт без остановки всю дорогу
+    const music = createBeyondMusic();
+    musicRef.current = music;
+    music.setMuted(!soundRef.current);
+    music.start();
 
     let audio = null;
     const tone = (freq, len, type, level, drop) => {
@@ -138,8 +154,10 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
       try {
         const Ctx = window.AudioContext || window.webkitAudioContext;
         if (!Ctx) return;
-        if (!audio) audio = new Ctx();
-        if (audio.state === 'suspended') audio.resume();
+        if (!audio || audio.state === 'closed') {
+          audio = (musicRef.current && musicRef.current.context()) || new Ctx();
+        }
+        if (audio.state !== 'running' && audio.resume) audio.resume();
         const now = audio.currentTime;
         const osc = audio.createOscillator();
         const gain = audio.createGain();
@@ -162,7 +180,7 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
         marks.push({
           idx: i,
           worldX: 4600 + MARK_STEP * i,
-          y: i % 2 === 0 ? height * 0.7 : height * 0.28,
+          y: m.boss ? height * 0.5 : (i % 2 === 0 ? height * 0.7 : height * 0.28),
           low: i % 2 === 0,
           text: m.text.toUpperCase(),
           hp: m.hp,
@@ -277,7 +295,8 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
         for (const m of marks) {
           if (m.life <= 0 || m.falling || !m.letters) continue;
           const sx = m.worldX - state.cam;
-          if (Math.abs(sx - b.x) > m.halfWidth || Math.abs(m.y - b.y) > m.size * 0.42) continue;
+          if (Math.abs(sx - b.x) > m.halfWidth) continue;
+          if (Math.abs(m.y - b.y) > (m.halfHeight || m.size * 0.42)) continue;
           m.hp -= 1;
           m.hitAt = now;
           const l = m.letters[Math.floor(Math.random() * m.letters.length)];
@@ -292,8 +311,9 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
             for (const ll of m.letters) { ll.vy = -2 - Math.random() * 5; ll.vr = (Math.random() - 0.5) * 0.3; }
             state.gloom = Math.min(1, state.gloom + 0.2);
             state.wave += 1;
+            music.setStage(state.wave);
             state.shakeUntil = now + 340;
-            tone(62, 1.3, 'sawtooth', 0.15, 0.35);
+            if (!m.boss) tone(62, 1.3, 'sawtooth', 0.15, 0.35);
             const horde = 5 + state.wave * 3;
             for (let k = 0; k < horde; k++) {
               spawnFoe(sx + (Math.random() - 0.5) * 300, m.y + (Math.random() - 0.5) * 280);
@@ -340,15 +360,41 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
       mouse.y = e.clientY;
       // кнопку держат — свет бьёт очередью, пока её не отпустят
       state.firing = true;
-      if (state.phase === 'road' || state.phase === 'wall') shoot(e.clientX, e.clientY);
+      if (state.phase === 'road' || state.phase === 'wall' || state.phase === 'rift') {
+        shoot(e.clientX, e.clientY);
+      }
     };
     const onUp = () => { state.firing = false; };
+
+    // Читкод для отладки: «]» роняет ближайшее слово, чтобы не идти дорогу заново
+    const onKey = (e) => {
+      if (e.code !== 'BracketRight' && e.key !== ']') return;
+      if (state.phase !== 'road' && state.phase !== 'wall') return;
+      const m = marks.find((one) => one.life > 0 && !one.falling);
+      if (!m) return;
+      if (!m.letters) prepareMark(m);
+      m.hp = 0;
+      m.falling = 0.001;
+      for (const ll of m.letters) {
+        ll.vy = -2 - Math.random() * 5;
+        ll.vr = (Math.random() - 0.5) * 0.3;
+      }
+      state.duel = m;
+      state.wave += 1;
+      music.setStage(state.wave);
+      state.gloom = Math.min(1, state.gloom + 0.2);
+      // читом идут налегке: орда расходится, а следующее слово не заставляет ждать
+      foes.length = 0;
+      state.skip = true;
+      tone(62, 1.1, 'sawtooth', 0.12, 0.35);
+    };
 
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerdown', onDown);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
     window.addEventListener('blur', onUp);
+    window.addEventListener('keydown', onKey);
 
     const hurt = () => {
       state.lives -= 1;
@@ -357,6 +403,7 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
       tone(80, 0.5, 'sawtooth', 0.12, 0.4);
       if (state.lives <= 0) {
         state.phase = 'lost';
+        music.surrender();
         state.t = 0;
         setLost(true);
         tone(38, 3.2, 'sine', 0.12, 0.4);
@@ -440,6 +487,23 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
 
     // Слово: буквы живут отдельно, поэтому их можно расшатать и уронить
     const prepareMark = (m) => {
+      if (m.boss) {
+        // разочарование стоит стеной: буква под буквой, во всю высоту дороги
+        const size = Math.min(Math.round((height * 0.94) / m.text.length), Math.round(height * 0.1));
+        ctx.font = `700 ${size}px Georgia, 'Times New Roman', serif`;
+        const step = size * 1.02;
+        const total = step * m.text.length;
+        let y = -total / 2 + step / 2;
+        m.letters = [];
+        for (const ch of m.text) {
+          m.letters.push({ ch, x: 0, y, w: ctx.measureText(ch).width, dx: 0, dy: 0, rot: 0, vy: 0, vr: 0 });
+          y += step;
+        }
+        m.size = size;
+        m.halfWidth = size * 0.66;
+        m.halfHeight = total / 2;
+        return;
+      }
       const size = Math.round(height * 0.085);
       ctx.font = `700 ${size}px Georgia, 'Times New Roman', serif`;
       const total = ctx.measureText(m.text).width;
@@ -447,11 +511,12 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
       m.letters = [];
       for (const ch of m.text) {
         const w = ctx.measureText(ch).width;
-        m.letters.push({ ch, x: x + w / 2, w, dx: 0, dy: 0, rot: 0, vy: 0, vr: 0 });
+        m.letters.push({ ch, x: x + w / 2, y: 0, w, dx: 0, dy: 0, rot: 0, vy: 0, vr: 0 });
         x += w;
       }
       m.size = size;
       m.halfWidth = total / 2 + size * 0.2;
+      m.halfHeight = size * 0.42;
     };
 
     const drawMark = (m, sx, now) => {
@@ -465,6 +530,17 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
       ctx.textBaseline = 'middle';
       const wear = 1 - m.hp / m.maxHp;
 
+      // за буквами стены стоит тёмная плита: сквозь неё и пробивается свет
+      if (m.boss && !m.falling) {
+        const half = m.halfWidth * 1.5;
+        const slab = ctx.createLinearGradient(sx - half, 0, sx + half, 0);
+        slab.addColorStop(0, 'rgba(6, 4, 9, 0)');
+        slab.addColorStop(0.5, `rgba(9, 6, 12, ${0.94 * m.shown})`);
+        slab.addColorStop(1, 'rgba(6, 4, 9, 0)');
+        ctx.fillStyle = slab;
+        ctx.fillRect(sx - half, 0, half * 2, height);
+      }
+
       for (const l of m.letters) {
         if (m.falling) {
           l.vy += 0.9;
@@ -472,7 +548,7 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
           l.rot += l.vr;
         }
         ctx.save();
-        ctx.translate(sx + l.x + l.dx, m.y + l.dy);
+        ctx.translate(sx + l.x + l.dx, m.y + (l.y || 0) + l.dy);
         ctx.rotate(l.rot);
         const shine = m.hitAt && now - m.hitAt < 140 ? 1 - (now - m.hitAt) / 140 : 0;
         // буква дышит и подрагивает: слово недоброе и живое
@@ -494,6 +570,19 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
         m.falling += 1 / 40;
         m.life = Math.max(0, 1 - m.falling / 1.6);
       }
+    };
+
+    // Свет за стеной: разгорается ступенями, по мере того как её ломают
+    const drawRift = (level, now) => {
+      if (level <= 0.002) return;
+      const w = width * (0.05 + level * 0.3);
+      const pulse = 0.9 + Math.sin(now * 0.0018) * 0.1;
+      const g = ctx.createLinearGradient(width - w, 0, width, 0);
+      g.addColorStop(0, 'rgba(236, 232, 226, 0)');
+      g.addColorStop(0.5, `rgba(236, 232, 226, ${0.14 * level * pulse})`);
+      g.addColorStop(1, `rgba(242, 238, 232, ${0.66 * level * pulse})`);
+      ctx.fillStyle = g;
+      ctx.fillRect(width - w, 0, w, height);
     };
 
     // Мысль живёт в разметке поверх сцены: холст её больше не съедает.
@@ -659,6 +748,17 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
         state.t += 1 / 40;
         // очередь идёт тем же откатом, что и одиночный выстрел
         if (state.firing && mouse.x > -900) shoot(mouse.x, mouse.y);
+
+        // за стеной теплится свет: три ступени, по мере того как её разбивают
+        const bossMark = marks.find((one) => one.boss && one.life > 0 && !one.falling);
+        let riftWant = 0;
+        if (bossMark && state.duel === bossMark) {
+          const left = Math.max(0, bossMark.hp) / bossMark.maxHp;
+          riftWant = left > 0.66 ? 0.14 : left > 0.33 ? 0.42 : 0.74;
+        } else if (!bossMark && state.wave >= MARKS.length) {
+          riftWant = 1;
+        }
+        state.riftGlow += (riftWant - state.riftGlow) * 0.016;
         const duel = state.duel;
         // рывок после разбитого слова: пока он длится, свет неуязвим
         const dash = Boolean(state.dashUntil && now < state.dashUntil);
@@ -672,7 +772,16 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
 
         // пока висит мысль, дух отходит на другой край, но не срывается туда:
         // сторона набирается и отпускается за несколько секунд
-        const wantAvoid = state.tale ? (state.tale.high ? 1 : -1) : 0;
+        let wantAvoid = 0;
+        if (state.tale) {
+          wantAvoid = state.tale.high ? 1 : -1;
+        } else {
+          // слово впереди: дух заранее сходит с его высоты, а не влетает в буквы
+          const ahead = marks.find((one) => one.life > 0 && !one.falling);
+          if (ahead && !ahead.boss && ahead.worldX - state.cam < width * 1.35) {
+            wantAvoid = ahead.low ? -1 : 1;
+          }
+        }
         state.avoid += (wantAvoid - state.avoid) * 0.007;
 
         // собственный путь духа: две волны, наложенные друг на друга.
@@ -686,10 +795,12 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
         // У слова он поднимается к середине верха и водит там круги
         if (duel) {
           state.orbit += 0.014;
-          // кружит с противоположной стороны от слова: оно внизу — он вверху
-          const ringY = duel.low ? height * 0.3 : height * 0.7;
-          const wantX = width * 0.44 + Math.cos(state.orbit) * width * 0.13;
-          const wantY = ringY + Math.sin(state.orbit) * height * 0.09;
+          // кружит с противоположной стороны от слова: оно внизу — он вверху.
+          // Перед стеной ходить некуда вбок, поэтому он мечется вдоль неё
+          const ringY = duel.boss ? height * 0.5 : (duel.low ? height * 0.3 : height * 0.7);
+          const wantX = (duel.boss ? width * 0.33 : width * 0.44)
+            + Math.cos(state.orbit) * width * (duel.boss ? 0.045 : 0.11);
+          const wantY = ringY + Math.sin(state.orbit) * height * (duel.boss ? 0.19 : 0.09);
           lamp.x += (wantX - lamp.x) * 0.014;
           lamp.y += (wantY - lamp.y) * 0.014;
         } else {
@@ -698,9 +809,17 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
         }
 
         if (onRoad && now > state.nextFoeAt) {
-          const pack = 1 + Math.floor(state.wave * 0.7);
-          for (let i = 0; i < pack; i++) spawnFoe();
-          state.nextFoeAt = now + Math.max(900, 3400 - state.wave * 400 - state.gloom * 700);
+          // из-за стены лезут без остановки: её держат, пока есть кому лезть
+          const atWall = Boolean(duel && duel.boss);
+          const pack = atWall ? 2 + Math.floor(state.wave * 0.22) : 1 + Math.floor(state.wave * 0.7);
+          for (let i = 0; i < pack; i++) {
+            if (atWall) {
+              spawnFoe(duel.worldX - state.cam + 30 + Math.random() * width * 0.16, Math.random() * height);
+            } else {
+              spawnFoe();
+            }
+          }
+          state.nextFoeAt = now + (atWall ? 1600 : Math.max(900, 3400 - state.wave * 400 - state.gloom * 700));
         }
 
         for (const d2 of dust) {
@@ -763,21 +882,18 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
               showTale(m.tale, high);
             }
             const sx = m.worldX - state.cam;
-            if (sx < width * 0.62) {
+            if (!m.letters) prepareMark(m);
+            // считается ближний край слова: чем оно длиннее, тем дальше встанет
+            const edge = sx - (m.boss ? 0 : m.halfWidth || 0);
+            // стена стоит дальше обычных слов: почти у самого края дороги
+            if (edge < width * (m.boss ? 0.8 : 0.62)) {
               state.duel = m;
               state.orbit = 0;
-              // на последнее слово свита слизней садится прямо на буквы
+              // стена встречает не свитой на буквах, а тем, что лезет из-за неё
               if (m.boss && !m.guarded) {
                 m.guarded = true;
-                for (let i = 0; i < WALL_GUARDS; i++) {
-                  const f = makeFoe(sx + (Math.random() - 0.5) * width * 0.5, m.y + (Math.random() - 0.5) * height * 0.3, 24 + Math.random() * 20, 2);
-                  f.stuck = true;
-                  f.homeX = f.x;
-                  f.homeY = f.y;
-                  f.host = m;
-                  f.offX = f.x - sx;
-                  foes.push(f);
-                }
+                state.nextFoeAt = now + 600;
+                tone(48, 2.6, 'sine', 0.1, 0.5);
               }
             }
           }
@@ -788,12 +904,22 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
           // отсчёт следующего этапа идёт от победы, а не от места на дороге
           state.stageAt = now;
           state.gateAt = now + MARK_GATE;
+          if (state.skip) {
+            // читом: ни молчаливой дороги, ни мысли — сразу следующая преграда
+            state.skip = false;
+            state.stageAt = now - MARK_GATE;
+            state.gateAt = now;
+            const next = marks.find((one) => one.life > 0 && !one.falling && one !== duel);
+            if (next) {
+              next.told = true;
+              next.worldX = state.cam + width * 1.05;
+            }
+          }
           if (wasBoss) {
-            // разочарование пало: свет срывается вперёд, в белизну
-            state.phase = 'break';
+            // стена пала: пролом разгорается во всю ширь, и свет идёт к нему
+            state.phase = 'rift';
             state.t = 0;
-            foes.length = 0;
-            tone(58, 2.2, 'sine', 0.14, 0.4);
+            music.triumph();
           }
           // рывок вперёд: уцелевшие остаются позади, а свет не лезет в толпу
           state.dashUntil = now + 2600;
@@ -813,6 +939,7 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
         ctx.globalAlpha = 1;
 
         drawTale(now);
+        drawRift(state.riftGlow, now);
 
         for (let i = marks.length - 1; i >= 0; i--) {
           const m = marks[i];
@@ -854,39 +981,74 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
           for (let i = 0; i < 10; i++) addCrack(state.wallX + Math.random() * 120, height * Math.random(), 170);
           tone(58, 1.8, 'sawtooth', 0.16, 0.3);
         }
-      } else if (state.phase === 'break') {
+      } else if (state.phase === 'rift') {
         state.t += 1 / 40;
-        const t = Math.min(1, state.t / 2.6);
-        const ease = t * t * (3 - 2 * t);
+        if (state.firing && mouse.x > -900) shoot(mouse.x, mouse.y);
+        // пролом разгорелся во всю ширь и тянет к себе
+        state.riftGlow += (1 - state.riftGlow) * 0.02;
+        lamp.x += (width * 0.8 - lamp.x) * 0.012;
+        lamp.y += (height * 0.5 - lamp.y) * 0.02;
 
-        // свет срывается вправо, навстречу разрастающейся белизне
-        lamp.x += (width * 0.86 - lamp.x) * 0.05;
-        lamp.y += (height * 0.5 - lamp.y) * 0.05;
-        drawDark(lamp.x, lamp.y, 240 + ease * 900, 1 - ease);
-        drawLamp(lamp.x, lamp.y, 1, lamp.r * (1 + ease * 2), now);
-        drawSparks();
-
-        // мягкая, не режущая глаз белизна растёт от правого края
-        const edge = width * (1.1 - ease * 1.6);
-        const glow = ctx.createLinearGradient(edge, 0, width, 0);
-        glow.addColorStop(0, 'rgba(236, 232, 226, 0)');
-        glow.addColorStop(0.35, `rgba(236, 232, 226, ${ease * 0.8})`);
-        glow.addColorStop(1, `rgba(238, 234, 228, ${Math.min(1, ease * 1.4)})`);
-        ctx.fillStyle = glow;
-        ctx.fillRect(edge, 0, width - edge, height);
-        if (ease > 0.7) {
-          ctx.fillStyle = `rgba(238, 234, 228, ${(ease - 0.7) / 0.3})`;
-          ctx.fillRect(0, 0, width, height);
+        // орда гонится следом, но тронуть его уже не успевает
+        for (let i = foes.length - 1; i >= 0; i--) {
+          const f = foes[i];
+          if (f.life <= 0) { foes.splice(i, 1); continue; }
+          f.stuck = false;
+          const dx = lamp.x - f.x, dy = lamp.y - f.y;
+          const d = Math.hypot(dx, dy) || 1;
+          f.wob += 0.06;
+          f.x += (dx / d) * 1.7 - 1.4;
+          f.y += (dy / d) * 1.7;
+          if (f.x < -180) foes.splice(i, 1);
         }
 
-        if (t >= 1) { state.phase = 'white'; state.t = 0; setWords(0); }
+        drawDark(lamp.x, lamp.y, 230 + state.riftGlow * 130, 1);
+        drawRift(state.riftGlow, now);
+        for (const f of foes) drawFoe(f, now);
+        stepBullets(now);
+        drawBeams();
+        drawLamp(lamp.x, lamp.y, 1, lamp.r, now);
+        drawSparks();
+
+        if (state.t > 4.4) { state.phase = 'break'; state.t = 0; foes.length = 0; }
+      } else if (state.phase === 'break') {
+        state.t += 1 / 40;
+        const t = Math.min(1, state.t / 3.4);
+        const ease = t * t * (3 - 2 * t);
+
+        // ход тот же, что и в проломе: ни скорость, ни цель не меняются
+        lamp.x += (width * 0.8 - lamp.x) * 0.012;
+        lamp.y += (height * 0.5 - lamp.y) * 0.02;
+        drawDark(lamp.x, lamp.y, 340 + ease * 620, 1 - ease * 0.85);
+        drawRift(1, now);
+        drawLamp(lamp.x, lamp.y, 1, lamp.r * (1 + ease * 1.4), now);
+        drawSparks();
+
+        // белизна поднимается ровно по всему экрану, без бегущего края
+        ctx.fillStyle = `rgba(238, 234, 228, ${ease})`;
+        ctx.fillRect(0, 0, width, height);
+
+        if (t >= 1) {
+          state.phase = 'white';
+          state.t = 0;
+          // расписание ударов задаёт музыка, надписи встают под них.
+          // Время здесь считается по часам, а не по кадрам: иначе на медленной
+          // машине надписи отстают от рояля
+          state.whiteAt = now;
+          state.outro = music.outro();
+        }
       } else if (state.phase === 'white') {
         ctx.fillStyle = 'rgb(238, 234, 228)';
         ctx.fillRect(0, 0, width, height);
         state.t += 1 / 40;
-        if (state.t > 2.8 && words < 1) setWords(1);
-        if (state.t > 6.2 && !title) { setWords(-1); setTitle(true); }
-        if (state.t > 9.4) {
+        const beats = (state.outro && state.outro.beats) || [0, 4.9, 9.8, 14.7, 19.6];
+        const total = (state.outro && state.outro.total) || 26.6;
+        const since = (now - state.whiteAt) / 1000;
+        if (since > beats[1] && words < 0) setWords(0);
+        if (since > beats[2] && words < 1) setWords(1);
+        if (since > beats[3] && words < 2) setWords(2);
+        if (since > beats[4] && !title) { setWords(-1); setTitle(true); }
+        if (since > total) {
           state.phase = 'done';
           state.t = 0;
           setTitle(false);
@@ -930,6 +1092,9 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
       window.removeEventListener('blur', onUp);
+      window.removeEventListener('keydown', onKey);
+      music.stop(1.6);
+      if (musicRef.current === music) musicRef.current = null;
       if (frame) cancelAnimationFrame(frame);
     };
   }, [alive]);
@@ -943,7 +1108,7 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
       )}
       {words >= 0 && <div className="beyond-words" key={`w${words}`}>{BEYOND_WORDS[words]}</div>}
       {lost && <div className="beyond-lost">{LOST_WORDS[0]}</div>}
-      {title && <div className="beyond-title">За гранью</div>}
+      {title && <div className="beyond-title">ЗА ГРАНЬЮ</div>}
     </>
   );
 }

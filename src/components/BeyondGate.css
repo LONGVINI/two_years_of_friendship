@@ -19,7 +19,7 @@
   letter-spacing: 0.16em;
   color: rgba(38, 34, 40, 0.88);
   white-space: nowrap;
-  animation: beyondWord 2.6s ease-in-out both;
+  animation: beyondWord 4.6s ease-in-out both;
 }
 
 @keyframes beyondWord {
@@ -78,13 +78,13 @@
   text-transform: uppercase;
   color: rgba(30, 26, 32, 0.9);
   white-space: nowrap;
-  animation: beyondTitle 3.2s ease-in-out both;
+  animation: beyondTitle 6.8s ease-in-out both;
 }
 
 @keyframes beyondTitle {
   0% { opacity: 0; letter-spacing: 0.7em; filter: blur(14px); }
-  30% { opacity: 1; letter-spacing: 0.3em; filter: blur(0); }
-  76% { opacity: 1; }
+  14% { opacity: 1; letter-spacing: 0.3em; filter: blur(0); }
+  88% { opacity: 1; letter-spacing: 0.3em; filter: blur(0); }
   100% { opacity: 0; filter: blur(6px); }
 }
 
@@ -111,7 +111,7 @@
   /* приходит справа, плывёт вместе с миром и уходит влево */
   opacity: 0;
   transform: translate(-50%, -50%) translateX(220px);
-  transition: opacity 1.2s ease, transform 8s linear;
+  transition: opacity 1.3s ease, transform 12s linear;
 }
 
 /* Строка стоит либо поверху, либо понизу, но идёт всегда ровно */
