@@ -3,76 +3,13 @@
 // nothing is locked, no challenges, no chains, every bookmark open.
 export const INTERACTIVE_MODE = true;
 
-// While testing: progress lives only until the page reloads.
-// Set to true and achievements survive restarts again.
-export const PERSIST_PROGRESS = false;
-
-const STORAGE_KEY = 'ruz-portfolio-progress';
+// Прогресс живёт только в памяти вкладки: ни хранилища, ни ключей, ни отмычек.
+// Каждый заход начинается с обложки и Тёмной тропы, а главы открываются
+// одна за другой, честным чтением и пройденным испытанием.
 
 // Главы, у которых есть собственное испытание. Остальные открываются
 // просто тем, что их пролистали целиком — иначе получился бы тупик.
 export const CHAPTERS_WITH_TRIAL = ['chapter-1', 'chapter-2', 'chapter-3', 'chapter-4'];
-
-// Временно: эти главы считаются пройденными сразу, без чтения и испытания.
-// Пустой список — всё по-честному.
-export const PRECLEARED_CHAPTERS = ['chapter-1', 'chapter-2', 'chapter-3'];
-const CHEAT_KEY = 'ruz-portfolio-cheat';
-
-// Отладочный ключ: пока включён, всё открыто и испытания не требуются.
-// Включается в консоли браузера или сочетанием клавиш, см. ниже.
-export function cheatEnabled() {
-  if (typeof window === 'undefined') return false;
-  try {
-    return window.localStorage.getItem(CHEAT_KEY) === 'on';
-  } catch (err) {
-    return false;
-  }
-}
-
-export function setCheat(on) {
-  if (typeof window === 'undefined') return;
-  try {
-    if (on) window.localStorage.setItem(CHEAT_KEY, 'on');
-    else window.localStorage.removeItem(CHEAT_KEY);
-  } catch (err) {
-    // storage unavailable
-  }
-}
-
-const emptyProgress = () => ({ seen: {}, done: {} });
-
-export function loadProgress() {
-  if (typeof window === 'undefined' || !PERSIST_PROGRESS) return emptyProgress();
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return emptyProgress();
-    const parsed = JSON.parse(raw);
-    return {
-      seen: parsed.seen && typeof parsed.seen === 'object' ? parsed.seen : {},
-      done: parsed.done && typeof parsed.done === 'object' ? parsed.done : {}
-    };
-  } catch (err) {
-    return emptyProgress();
-  }
-}
-
-export function saveProgress(progress) {
-  if (typeof window === 'undefined' || !PERSIST_PROGRESS) return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
-  } catch (err) {
-    // storage unavailable: progress simply does not survive a reload
-  }
-}
-
-export function resetProgress() {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.removeItem(STORAGE_KEY);
-  } catch (err) {
-    // nothing to do
-  }
-}
 
 // Every drawing of a chapter must have been opened at least once
 export function chapterFullySeen(drawings, chapterId, seen) {
@@ -88,8 +25,6 @@ export function chapterChallengeDone(chapterId, done) {
 
 // A chapter is cleared when it has been read through and its challenge is solved
 export function chapterCleared(drawings, chapterId, progress) {
-  if (cheatEnabled()) return true;
-  if (PRECLEARED_CHAPTERS.includes(chapterId)) return true;
   return chapterFullySeen(drawings, chapterId, progress.seen)
     && chapterChallengeDone(chapterId, progress.done);
 }
@@ -98,11 +33,6 @@ export function chapterCleared(drawings, chapterId, progress) {
 export function buildUnlockMap(drawings, progress) {
   const chapters = drawings.filter((d) => d.type === 'chapter');
   const unlocked = {};
-
-  if (cheatEnabled()) {
-    chapters.forEach((chapter) => { unlocked[chapter.id] = true; });
-    return unlocked;
-  }
 
   let previousCleared = true;
 

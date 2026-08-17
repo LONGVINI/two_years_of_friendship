@@ -135,7 +135,6 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
       riftGlow: 0,
       outro: null,
       whiteAt: 0,
-      skip: false,
       born: null,
       homeX: 0,
       lamp: { x: 0, y: 0, glow: 0, r: 2, hitAt: 0 }
@@ -367,34 +366,11 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
     const onUp = () => { state.firing = false; };
 
     // Читкод для отладки: «]» роняет ближайшее слово, чтобы не идти дорогу заново
-    const onKey = (e) => {
-      if (e.code !== 'BracketRight' && e.key !== ']') return;
-      if (state.phase !== 'road' && state.phase !== 'wall') return;
-      const m = marks.find((one) => one.life > 0 && !one.falling);
-      if (!m) return;
-      if (!m.letters) prepareMark(m);
-      m.hp = 0;
-      m.falling = 0.001;
-      for (const ll of m.letters) {
-        ll.vy = -2 - Math.random() * 5;
-        ll.vr = (Math.random() - 0.5) * 0.3;
-      }
-      state.duel = m;
-      state.wave += 1;
-      music.setStage(state.wave);
-      state.gloom = Math.min(1, state.gloom + 0.2);
-      // читом идут налегке: орда расходится, а следующее слово не заставляет ждать
-      foes.length = 0;
-      state.skip = true;
-      tone(62, 1.1, 'sawtooth', 0.12, 0.35);
-    };
-
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerdown', onDown);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
     window.addEventListener('blur', onUp);
-    window.addEventListener('keydown', onKey);
 
     const hurt = () => {
       state.lives -= 1;
@@ -904,17 +880,6 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
           // отсчёт следующего этапа идёт от победы, а не от места на дороге
           state.stageAt = now;
           state.gateAt = now + MARK_GATE;
-          if (state.skip) {
-            // читом: ни молчаливой дороги, ни мысли — сразу следующая преграда
-            state.skip = false;
-            state.stageAt = now - MARK_GATE;
-            state.gateAt = now;
-            const next = marks.find((one) => one.life > 0 && !one.falling && one !== duel);
-            if (next) {
-              next.told = true;
-              next.worldX = state.cam + width * 1.05;
-            }
-          }
           if (wasBoss) {
             // стена пала: пролом разгорается во всю ширь, и свет идёт к нему
             state.phase = 'rift';
@@ -1092,7 +1057,6 @@ export default function BeyondGate({ active, bookRef, onDrift, onComplete, onFai
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
       window.removeEventListener('blur', onUp);
-      window.removeEventListener('keydown', onKey);
       music.stop(1.6);
       if (musicRef.current === music) musicRef.current = null;
       if (frame) cancelAnimationFrame(frame);

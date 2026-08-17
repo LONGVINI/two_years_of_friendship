@@ -23,12 +23,6 @@ import GenesisTrial, { SEAM_STAGES } from './GenesisTrial';
 import {
   INTERACTIVE_MODE,
   CHAPTERS_WITH_TRIAL,
-  PRECLEARED_CHAPTERS,
-  cheatEnabled,
-  setCheat,
-  resetProgress,
-  loadProgress,
-  saveProgress,
   buildUnlockMap,
   chapterCleared,
   chapterFullySeen,
@@ -110,72 +104,11 @@ export default function Book() {
     pageStamp: -1
   });
   const [photoFlipped, setPhotoFlipped] = useState(false);
-  const [progress, setProgress] = useState(() => (INTERACTIVE_MODE ? loadProgress() : { seen: {}, done: {} }));
+  // Прогресс держится только в памяти вкладки: перезагрузка возвращает
+  // альбом к обложке, а главы приходится открывать заново
+  const [progress, setProgress] = useState({ seen: {}, done: {} });
   const challengeRef = useRef({ fed: 0, lastFedAt: 0, chapterId: null, solved: false, complete: null, trialActive: false });
   const handleNextRef = useRef(null);
-
-  // Читкод: Ctrl+Shift+U открывает все закладки, Ctrl+Shift+R сбрасывает прогресс.
-  // Те же действия доступны из консоли: window.ruzCheat(true) / window.ruzReset()
-  const [cheat, setCheatState] = useState(() => (typeof window !== 'undefined' ? cheatEnabled() : false));
-  const jumpToTrialRef = useRef(null);
-  const gotoRef = useRef(null);
-  const statusRef = useRef(null);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return undefined;
-
-    const applyCheat = (on) => {
-      setCheat(on);
-      setCheatState(on);
-      console.info(on ? 'Читкод включён: все главы открыты' : 'Читкод выключен');
-    };
-
-    window.ruzCheat = applyCheat;
-    window.ruzReset = () => {
-      resetProgress();
-      setProgress({ seen: {}, done: {} });
-      console.info('Прогресс сброшен');
-    };
-
-    // Показать, что открыто и почему
-    window.ruzStatus = () => {
-      const show = statusRef.current;
-      if (show) show();
-    };
-
-    // Прыжок к испытанию: последняя работа текущей главы, всё до неё считается прочитанным
-    window.ruzTrial = () => {
-      const jump = jumpToTrialRef.current;
-      if (jump) jump();
-    };
-    window.ruzGoto = (index) => {
-      const jump = gotoRef.current;
-      if (jump) jump(index);
-    };
-
-    const onKey = (e) => {
-      if (!e.ctrlKey || !e.shiftKey) return;
-      if (e.code === 'KeyU') {
-        e.preventDefault();
-        applyCheat(!cheatEnabled());
-      }
-      if (e.code === 'KeyR') {
-        e.preventDefault();
-        window.ruzReset();
-      }
-      if (e.code === 'KeyE') {
-        e.preventDefault();
-        if (jumpToTrialRef.current) jumpToTrialRef.current();
-      }
-    };
-
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      delete window.ruzCheat;
-      delete window.ruzReset;
-    };
-  }, []);
 
   // Which chapter a page belongs to; chapter dividers carry their own id
   const chapterIdOf = (drawing) => {
@@ -185,7 +118,7 @@ export default function Book() {
 
   const unlockMap = useMemo(
     () => (INTERACTIVE_MODE ? buildUnlockMap(drawings, progress) : {}),
-    [drawings, progress, cheat]
+    [drawings, progress]
   );
 
   const prevUnlockRef = useRef({});
@@ -217,60 +150,12 @@ export default function Book() {
   const forwardLocked =
     INTERACTIVE_MODE && crossesChapterBorder && !chapterCleared(drawings, currentChapterId, progress);
 
-  // Читкод-прыжки: к испытанию текущей главы и к произвольной странице
-  useEffect(() => {
-    gotoRef.current = (index) => {
-      const target = Math.max(0, Math.min(drawings.length - 1, Number(index) || 0));
-      setCurrentIndex(target);
-      console.info('Переход на страницу', target, drawings[target] && drawings[target].title);
-    };
-
-    statusRef.current = () => {
-      const chapters = drawings.filter((d) => d.type === 'chapter');
-      const rows = chapters.map((ch) => {
-        const pages = drawings.filter((d) => d.chapterId === ch.id);
-        const seen = pages.filter((d) => progress.seen[d.id]).length;
-        return {
-          'глава': ch.title,
-          'прочитано': `${seen} из ${pages.length}`,
-          'испытание': CHAPTERS_WITH_TRIAL.includes(ch.id)
-            ? (progress.done[ch.id] ? 'пройдено' : 'не пройдено')
-            : 'нет',
-          'открыта': unlockMap[ch.id] ? 'да' : 'нет'
-        };
-      });
-      console.table(rows);
-      if (cheat) console.info('внимание: включён читкод, открыто всё');
-    };
-
-    jumpToTrialRef.current = () => {
-      const chapter = chapterIdOf(drawings[currentIndex]);
-      const target = chapter ? lastPageOfChapter[chapter] : null;
-      if (target === undefined || target === null) {
-        console.info('Не нашёл испытание: текущая страница вне главы');
-        return;
-      }
-      // помечаем главу прочитанной, иначе замок останется
-      setProgress((prev) => {
-        const seen = { ...prev.seen };
-        drawings.forEach((d) => { if (d.chapterId === chapter) seen[d.id] = true; });
-        const next = { seen, done: prev.done };
-        saveProgress(next);
-        return next;
-      });
-      setCurrentIndex(target);
-      console.info('Прыжок к испытанию главы', chapter);
-    };
-  }, [drawings, currentIndex, lastPageOfChapter, progress, unlockMap, cheat]);
-
   const isTrialIndex = (index) => {
     const cid = chapterIdOf(drawings[index]);
     return (
       INTERACTIVE_MODE &&
-      !cheat &&
       Boolean(cid) &&
       CHAPTERS_WITH_TRIAL.includes(cid) &&
-      !PRECLEARED_CHAPTERS.includes(cid) &&
       index === lastPageOfChapter[cid] &&
       !progress.done[cid]
     );
@@ -337,7 +222,7 @@ export default function Book() {
   useEffect(() => () => unveilTimers.current.forEach(clearTimeout), []);
 
   useEffect(() => {
-    if (!INTERACTIVE_MODE || cheat) return;
+    if (!INTERACTIVE_MODE) return;
     const here = drawings[currentIndex];
     if (!here || here.title !== BEACON_TITLE) return;
     if (progress.done['chapter-3'] || hurledRef.current) return;
@@ -358,11 +243,11 @@ export default function Book() {
       setTimeout(() => setBlackout(false), 6000),
       setTimeout(() => lockScene(false), 6800)
     ];
-  }, [currentIndex, drawings, progress, cheat, lastPageOfChapter, hurlTo, lockScene]);
+  }, [currentIndex, drawings, progress, lastPageOfChapter, hurlTo, lockScene]);
 
   // Вернувшись к маяку и замерев, слышишь второе: чего от тебя хотят
   useEffect(() => {
-    if (!INTERACTIVE_MODE || cheat) return undefined;
+    if (!INTERACTIVE_MODE) return undefined;
     const here = drawings[currentIndex];
     const atBeacon = Boolean(here && here.title === BEACON_TITLE && hurledRef.current);
     if (!atBeacon || progress.done['chapter-3']) return undefined;
@@ -385,7 +270,7 @@ export default function Book() {
       window.removeEventListener('pointerdown', wake);
       setBeaconCry(null);
     };
-  }, [currentIndex, drawings, progress, cheat, sceneLocked, blackout]);
+  }, [currentIndex, drawings, progress, sceneLocked, blackout]);
 
   // У маяка глаза отводят взгляд от работы: зрачки уходят прочь от середины
   useEffect(() => {
@@ -399,13 +284,13 @@ export default function Book() {
   // ни перетаскиванием. Вперёд — пожалуйста.
   const eyesHere = drawings[currentIndex] ? EYE_MAPS[drawings[currentIndex].title] : null;
   const backLocked = Boolean(
-    INTERACTIVE_MODE && !cheat && eyesHere && !progress.done['chapter-3'] &&
+    INTERACTIVE_MODE && eyesHere && !progress.done['chapter-3'] &&
     (eyesClosed[drawings[currentIndex].title] || []).length < eyesHere.length
   );
 
   // Замок стоит на последнем развороте Переосмысления, у самой границы глав
   const chainGateHere = Boolean(
-    INTERACTIVE_MODE && !cheat &&
+    INTERACTIVE_MODE &&
     currentChapterId === 'chapter-4' &&
     !progress.done['chapter-4'] &&
     currentIndex === lastPageOfChapter['chapter-4']
@@ -668,7 +553,6 @@ export default function Book() {
     setProgress((prev) => {
       if (prev.seen[drawing.id]) return prev;
       const next = { seen: { ...prev.seen, [drawing.id]: true }, done: prev.done };
-      saveProgress(next);
       return next;
     });
   }, [currentIndex, drawings]);
@@ -679,7 +563,6 @@ export default function Book() {
     setProgress((prev) => {
       if (prev.done[chapterId]) return prev;
       const next = { seen: prev.seen, done: { ...prev.done, [chapterId]: true } };
-      saveProgress(next);
       return next;
     });
   }, []);
@@ -1999,7 +1882,7 @@ export default function Book() {
     let deepest = -1;
     drawings.forEach((d, i) => {
       if (d.chapterId !== chapterId) return;
-      if (cheat || progress.seen[d.id]) deepest = i;
+      if (progress.seen[d.id]) deepest = i;
     });
     return deepest >= 0 ? deepest : fallbackIndex;
   };
@@ -2410,7 +2293,7 @@ export default function Book() {
           key="photo-wrapper"
           style={drawing.w && drawing.h ? { aspectRatio: `${drawing.w} / ${drawing.h}` } : undefined}
         >
-          {drawing.title === FINAL_WORK && (!progress.done['chapter-3'] || unveil) && INTERACTIVE_MODE && !cheat && (
+          {drawing.title === FINAL_WORK && (!progress.done['chapter-3'] || unveil) && INTERACTIVE_MODE && (
             <PentagramLayer taken={takenEyes} total={eyesTotal} finale={unveil} />
           )}
 
@@ -2527,7 +2410,7 @@ export default function Book() {
     // Normal Content Page
     const guardSeam = seamVisible && drawings[seamIndex] && drawing.id === drawings[seamIndex].id;
     // Пока испытание не пройдено, у безликой жрицы не разобрать ни слова
-    const veiled = INTERACTIVE_MODE && !cheat &&
+    const veiled = INTERACTIVE_MODE &&
       drawing.title === FINAL_WORK && !progress.done['chapter-3'];
     return (
       <div
