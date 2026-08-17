@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Volume2, VolumeX, RefreshCw, Play, Pause, Clock, ChevronDown } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Volume2, VolumeX, RefreshCw, Play, Pause, Clock, ChevronDown, Music } from 'lucide-react';
 import ScratchGame from './ScratchGame';
 import PolaroidGame from './PolaroidGame';
 import ChapterOrnament from './ChapterOrnament';
@@ -16,6 +16,7 @@ import BeyondLayer from './BeyondLayer';
 import CornerShards from './CornerShards';
 import BrokenSheet from './BrokenSheet';
 import BeyondGate from './BeyondGate';
+import { createChapterMusic } from './chapterMusic';
 import CornerEyes from './CornerEyes';
 import TrialOverlay from './TrialOverlay';
 import GenesisTrial, { SEAM_STAGES } from './GenesisTrial';
@@ -42,6 +43,14 @@ const COSMIC_CHAPTERS = ['Тёмная тропа'];
 const CRYSTAL_CHAPTERS = ['Генезис'];
 const EYE_HOLD_CHAPTERS = ['Ренессанс'];
 const SHARD_CHAPTERS = ['За гранью'];
+
+// Небо идёт шагами по одной шестидесятой секунды, и всё в нём двигается на шаг.
+// Этими множителями задаётся, во сколько раз быстрее прежнего идут те, кому
+// медлительность не к лицу: блуждание и вращение чёрной дыры, пролёт звезды,
+// разлёт осколков и ударная волна от квазара
+const HOLE_SPEED = 1.7;
+const METEOR_SPEED = 1.6;
+const BLAST_SPEED = 1.6;
 
 export default function Book() {
   const [drawings, setDrawings] = useState([]);
@@ -76,6 +85,17 @@ export default function Book() {
   });
 
   const [soundEnabled, setSoundEnabled] = useState(true);
+  // Музыка глав выключается отдельной кнопкой: страницы и сцены при этом
+  // остаются со своими звуками
+  const [musicEnabled, setMusicEnabled] = useState(true);
+  // Громкость музыки в сотых долях. Ползунок выезжает из-под кнопки при
+  // наведении и живёт вне язычка: тот прячет всё, что вылезает за его края
+  const [musicVolume, setMusicVolume] = useState(50);
+  const [volumeOpen, setVolumeOpen] = useState(false);
+  const [volumeBox, setVolumeBox] = useState({ top: 0, right: 0 });
+  const musicBtnRef = useRef(null);
+  const volumeHideRef = useRef(null);
+  const chapterMusicRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [soundIndex, setSoundIndex] = useState(1);
   const canvasRef = useRef(null);
@@ -494,6 +514,80 @@ export default function Book() {
 
   const seamVisible = isTrialIndex(seamIndex) && chapterIdOf(drawings[seamIndex]) === 'chapter-2';
 
+  // Какая музыка положена развороту. Голос меняется на том же индексе, что и
+  // цвет, поэтому новая глава начинает звучать уже в полёте страницы. Музыки
+  // нет только на обложке; последний надорванный лист остаётся с музыкой
+  // своей главы
+  const musicPage = drawings[themeIndex];
+  const musicKey = !musicPage || musicPage.isCover ? null : chapterIdOf(musicPage);
+
+  useEffect(() => {
+    const music = createChapterMusic();
+    chapterMusicRef.current = music;
+    // браузер не отдаёт звук до первого действия человека, поэтому музыка
+    // просыпается на первом касании или нажатии клавиши
+    const wake = () => {
+      music.start();
+      window.removeEventListener('pointerdown', wake);
+      window.removeEventListener('keydown', wake);
+    };
+    window.addEventListener('pointerdown', wake);
+    window.addEventListener('keydown', wake);
+    return () => {
+      window.removeEventListener('pointerdown', wake);
+      window.removeEventListener('keydown', wake);
+      music.stop(0.6);
+      chapterMusicRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (chapterMusicRef.current) chapterMusicRef.current.setChapter(musicKey);
+  }, [musicKey]);
+
+  useEffect(() => {
+    if (chapterMusicRef.current) chapterMusicRef.current.setMuted(!musicEnabled || !soundEnabled);
+  }, [musicEnabled, soundEnabled]);
+
+  useEffect(() => {
+    if (chapterMusicRef.current) chapterMusicRef.current.setVolume(musicVolume / 100);
+  }, [musicVolume]);
+
+  // Ползунок держится, пока мышь идёт от кнопки к нему, и убирается с задержкой
+  const showVolume = useCallback(() => {
+    if (volumeHideRef.current) {
+      clearTimeout(volumeHideRef.current);
+      volumeHideRef.current = null;
+    }
+    const btn = musicBtnRef.current;
+    if (btn) {
+      const box = btn.getBoundingClientRect();
+      setVolumeBox({
+        top: box.top + box.height / 2,
+        right: Math.max(12, window.innerWidth - box.left + 12)
+      });
+    }
+    setVolumeOpen(true);
+  }, []);
+
+  const hideVolume = useCallback(() => {
+    if (volumeHideRef.current) clearTimeout(volumeHideRef.current);
+    volumeHideRef.current = setTimeout(() => setVolumeOpen(false), 280);
+  }, []);
+
+  useEffect(() => () => {
+    if (volumeHideRef.current) clearTimeout(volumeHideRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!panelOpen) setVolumeOpen(false);
+  }, [panelOpen]);
+
+  // За гранью играет свой рояль, и под темнотой главы книге положено молчать
+  useEffect(() => {
+    if (chapterMusicRef.current) chapterMusicRef.current.setDucked(beyondScene || blackout);
+  }, [beyondScene, blackout]);
+
   useEffect(() => {
     fetch(`${import.meta.env.BASE_URL}album.json`)
       .then((res) => res.json())
@@ -787,7 +881,7 @@ export default function Book() {
     const spawnBurst = (x, y, count, power, tint) => {
       for (let i = 0; i < count; i++) {
         const a = Math.random() * Math.PI * 2;
-        const speed = power * (0.4 + Math.random() * 0.9);
+        const speed = power * (0.4 + Math.random() * 0.9) * BLAST_SPEED;
         particlesRef.current.particles.push({
           x, y,
           vx: Math.cos(a) * speed,
@@ -824,8 +918,8 @@ export default function Book() {
         type: 'blackhole',
         x: fromLeft ? -60 : width + 60,
         y: Math.random() * height * 0.8 + height * 0.1,
-        vx: (fromLeft ? 1 : -1) * (0.7 + Math.random() * 0.6),
-        vy: (Math.random() - 0.5) * 0.25,
+        vx: (fromLeft ? 1 : -1) * (0.7 + Math.random() * 0.6) * HOLE_SPEED,
+        vy: (Math.random() - 0.5) * 0.25 * HOLE_SPEED,
         r: 13 + Math.random() * 9,
         eaten: 0,
         spin: 0
@@ -957,16 +1051,27 @@ export default function Book() {
     };
     window.addEventListener('click', handleWindowClick);
 
-    let lastSky = 0;
-    const SKY_STEP = 1000 / 40;
+    // Небо отсчитывает шаги само: ровно шестьдесят в секунду, каким бы ни был
+    // монитор. Звёзды, дыры и созвездия сдвигаются на кадр, а не на прошедшее
+    // время, поэтому на быстром экране лишние кадры пропускаются, а не гонят
+    // небо вперёд. При свёрнутом окне небо замирает вовсе
+    const SKY_STEP = 1000 / 60;
+    let skyClock = 0;
+    let skyLast = 0;
 
     const animate = () => {
-      // Небо живёт своим ходом: полный шаг монитора ему ни к чему,
-      // а при свёрнутом окне оно замирает вовсе
       const nowSky = performance.now();
-      if (document.hidden) { animationId = requestAnimationFrame(animate); return; }
-      if (nowSky - lastSky < SKY_STEP) { animationId = requestAnimationFrame(animate); return; }
-      lastSky = nowSky;
+      if (document.hidden) {
+        skyLast = nowSky;
+        animationId = requestAnimationFrame(animate);
+        return;
+      }
+      const elapsed = skyLast ? nowSky - skyLast : SKY_STEP;
+      skyLast = nowSky;
+      // после простоя долг не копится: небо продолжает с текущего мгновения
+      skyClock += Math.min(elapsed, SKY_STEP * 3);
+      if (skyClock < SKY_STEP) { animationId = requestAnimationFrame(animate); return; }
+      skyClock = Math.min(skyClock - SKY_STEP, SKY_STEP);
 
       // Smooth Lerping Utility
       const lerpColor = (current, target, factor = 0.015) => {
@@ -1144,7 +1249,7 @@ export default function Book() {
       if (era === 'constellation' && tNow > nextShootAt) {
         nextShootAt = tNow + 5000 + Math.random() * 9000;
         const fromLeft = Math.random() < 0.7;
-        const speed = 26 + Math.random() * 14;
+        const speed = (26 + Math.random() * 14) * METEOR_SPEED;
         const slope = 0.25 + Math.random() * 0.5;
         particles.push({
           x: fromLeft ? -40 : width + 40,
@@ -1374,7 +1479,7 @@ export default function Book() {
           const ev = cosmic[i];
 
           if (ev.type === 'shock') {
-            ev.r += (ev.maxR - ev.r) * 0.08 + 1.2;
+            ev.r += ((ev.maxR - ev.r) * 0.08 + 1.2) * BLAST_SPEED;
             ev.alpha -= 0.02;
             if (ev.alpha <= 0) cosmic.splice(i, 1);
             continue;
@@ -1415,7 +1520,7 @@ export default function Book() {
             }
             ev.x += ev.vx;
             ev.y += ev.vy;
-            ev.spin += 0.04;
+            ev.spin += 0.04 * HOLE_SPEED;
 
             for (let j = particles.length - 1; j >= 0; j--) {
               const p = particles[j];
@@ -2389,7 +2494,6 @@ export default function Book() {
           <div className="cover-content">
             <h1>Искусство длиною в жизнь</h1>
             <p>Личное портфолио Рузанны Манвелян</p>
-            <div className="click-to-open">Кликните или потяните, чтобы открыть</div>
           </div>
         </div>
       );
@@ -2818,12 +2922,25 @@ export default function Book() {
           <span style={{marginLeft: 5, fontSize: '0.8rem'}}>{playInterval / 1000}s</span>
         </button>
 
-        <button 
-          className="control-btn" 
+        <button
+          className="control-btn"
           onClick={() => setSoundEnabled(!soundEnabled)}
           title={soundEnabled ? "Выключить звук" : "Включить звук"}
         >
           {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+        </button>
+
+        <button
+          ref={musicBtnRef}
+          className={`control-btn music-btn ${musicEnabled ? '' : 'music-off'}`}
+          onClick={() => setMusicEnabled(!musicEnabled)}
+          onPointerEnter={showVolume}
+          onPointerLeave={hideVolume}
+          onFocus={showVolume}
+          onBlur={hideVolume}
+          title={musicEnabled ? "Выключить музыку главы" : "Включить музыку главы"}
+        >
+          <Music size={20} />
         </button>
         </div>
 
@@ -2834,6 +2951,28 @@ export default function Book() {
         >
           <ChevronDown size={20} />
         </button>
+      </div>
+
+      {/* Громкость музыки. Стоит вне язычка: у того обрезаются края,
+          и выехавший ползунок был бы срезан вместе с ними */}
+      <div
+        className={`music-volume ${volumeOpen && panelOpen && !isCoverClosed ? 'open' : ''}`}
+        style={{ top: volumeBox.top, right: volumeBox.right }}
+        onPointerEnter={showVolume}
+        onPointerLeave={hideVolume}
+      >
+        <input
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          value={musicVolume}
+          style={{ '--fill': musicVolume }}
+          onChange={(e) => setMusicVolume(Number(e.target.value))}
+          title={`Громкость музыки: ${musicVolume}%`}
+          aria-label="Громкость музыки"
+        />
+        <span className="music-volume-value">{musicVolume}</span>
       </div>
 
       {/* CSS flip animations */}

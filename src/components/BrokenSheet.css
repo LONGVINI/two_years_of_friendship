@@ -7,6 +7,25 @@
   height: 100%;
   pointer-events: none;
   z-index: 3;
+  overflow: visible;
+}
+
+/* свет в щелях медленно дышит; отрицательная задержка задаётся компонентом от
+   общего времени страницы, чтобы заново смонтированная копия листа подхватывала
+   уже идущую фазу, а не начинала цикл с тёмного края */
+.broken-sheet .sheet-glow {
+  animation: sheetBreath 7s ease-in-out infinite alternate;
+  animation-delay: var(--breath-phase, 0s);
+}
+
+.broken-sheet .sheet-edge {
+  animation: sheetBreath 7s ease-in-out infinite alternate;
+  animation-delay: var(--breath-phase, 0s);
+}
+
+@keyframes sheetBreath {
+  0% { opacity: 0.55; }
+  100% { opacity: 1; }
 }
 
 /* Разбитый разворот: бумага та же, что и у остальных страниц, но пустая */
