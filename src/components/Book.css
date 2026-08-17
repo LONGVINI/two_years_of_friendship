@@ -769,6 +769,10 @@
   transform: rotateY(180deg);
 }
 
+.photo-flipper.flipped .photo-back-side {
+  visibility: visible;
+}
+
 .photo-flipper img {
   image-rendering: auto;
   backface-visibility: hidden;
@@ -782,6 +786,11 @@
   transform: rotateY(180deg) translateZ(0.4px);
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
+  /* Оборот листа светлый, и при повороте книги он успевал мигнуть поверх
+     работы. Пока фотографию не перевернули, его нет вовсе, а появляется он
+     на середине собственного оборота, когда лицевая сторона уже ушла */
+  visibility: hidden;
+  transition: visibility 0s linear 0.34s;
   background:
     repeating-linear-gradient(0deg,
       rgba(120, 100, 70, 0.08) 0px,
@@ -1062,19 +1071,72 @@
 }
 
 /* Темнота, в которой книгу перебрасывает через полглавы */
+/* Мгла, в которой книгу переносит через полглавы: она не гаснет разом,
+   а наплывает клубами и так же неохотно расходится */
 .chapter-blackout {
   position: fixed;
-  inset: 0;
+  inset: -10%;
   z-index: 500;
-  background: radial-gradient(ellipse at center, #070810 0%, #04050a 100%);
   opacity: 0;
   pointer-events: none;
-  /* уходит медленнее, чем наползает: свет возвращается неохотно */
-  transition: opacity 1.1s ease-in;
+  background:
+    radial-gradient(60% 50% at 30% 35%, rgba(8, 7, 11, 0.98) 0%, rgba(4, 4, 7, 0.7) 55%, rgba(0, 0, 0, 0) 78%),
+    radial-gradient(55% 48% at 72% 62%, rgba(6, 6, 10, 0.98) 0%, rgba(3, 3, 6, 0.72) 58%, rgba(0, 0, 0, 0) 80%),
+    radial-gradient(120% 100% at 50% 50%, rgba(2, 2, 4, 0.96) 0%, rgba(0, 0, 0, 1) 100%);
+  transition: opacity 1.6s ease-out;
 }
 
 .chapter-blackout.on {
   opacity: 1;
   pointer-events: auto;
-  transition: opacity 0.85s cubic-bezier(0.6, 0, 0.9, 0.4);
+  /* глухая: сквозь неё не должно проступать ни книги, ни фона */
+  background-color: #000;
+  transition: opacity 1.6s cubic-bezier(0.4, 0, 0.7, 0.6);
+  animation: blackoutRoil 9s ease-in-out infinite alternate;
+}
+
+@keyframes blackoutRoil {
+  0% { transform: scale(1) translate3d(0, 0, 0); }
+  50% { transform: scale(1.08) translate3d(-1.5%, 1%, 0); }
+  100% { transform: scale(1.03) translate3d(1.5%, -1%, 0); }
+}
+
+/* В Ренессансе текст не выделяется: тянешь мышью по странице — не должно
+   оставаться синих полос поверх рисунка */
+.book-container,
+.book-container * {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+.book-container ::selection { background: transparent; }
+.book-container ::-moz-selection { background: transparent; }
+
+/* Голос маяка: проступает из темноты и так же нехотя тает */
+.beacon-cry {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 520;
+  pointer-events: none;
+  font-family: var(--font-display, Georgia, serif);
+  font-size: clamp(2.2rem, 5vw, 4rem);
+  letter-spacing: 0.3em;
+  color: rgba(214, 198, 190, 0.9);
+  text-shadow:
+    0 0 24px rgba(0, 0, 0, 0.95),
+    0 0 60px rgba(120, 16, 20, 0.5),
+    0 2px 0 rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+  animation: beaconCry 3.1s ease-in-out forwards;
+}
+
+@keyframes beaconCry {
+  0% { opacity: 0; letter-spacing: 0.8em; filter: blur(14px); }
+  28% { opacity: 1; letter-spacing: 0.3em; filter: blur(0); }
+  70% { opacity: 1; letter-spacing: 0.3em; }
+  100% { opacity: 0; letter-spacing: 0.42em; filter: blur(10px); }
 }

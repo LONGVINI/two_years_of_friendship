@@ -1,0 +1,7 @@
+/* Цепи лежат поверх книги: по ним бьют, поэтому слой ловит мышь */
+.chain-trial {
+  position: fixed;
+  inset: 0;
+  z-index: 340;
+  cursor: crosshair;
+}

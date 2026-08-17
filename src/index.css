@@ -9,6 +9,8 @@
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   
   --font-display: 'Playfair Display', Georgia, serif;
+  /* голос повествования: тем, что говорится в сторону, а не вслух */
+  --font-quote: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
   --font-title: 'Outfit', 'Inter', sans-serif;
   --font-sans: 'Inter', sans-serif;
 

@@ -1,0 +1,13 @@
+/* Жилы лежат на самой работе и едут вместе с ней при перелистывании:
+   тот же уровень, что раньше занимал скотч */
+.corner-veins {
+  position: absolute;
+  /* холст шире работы: смещение и размеры выставляет сам слой */
+  left: 0;
+  top: 0;
+  z-index: 5;
+  pointer-events: none;
+  transform: translateZ(0.03px);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}

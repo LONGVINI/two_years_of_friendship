@@ -2,32 +2,72 @@
 .renaissance-eyes {
   position: fixed;
   inset: 0;
+  /* на маяке слой поднимается над книгой: мгла должна съесть и разворот */
+  z-index: 320;
+  pointer-events: none;
+}
+
+.renaissance-eyes.behind {
+  z-index: 0;
+}
+
+/* Мгла за глазами: три слоя тёмных клубов, каждый со своим ходом.
+   По отдельности почти не видно, вместе — воздух перестаёт быть пустым */
+.eyes-haze {
+  position: fixed;
+  inset: -12%;
   z-index: 0;
   pointer-events: none;
+  opacity: 0.9;
+  /* клубы едут только преобразованиями: так их считает видеокарта, а не процессор */
+  will-change: transform, opacity;
 }
 
-/* Фраза проступает поверх всего — её читают в тишине, когда курсор замер */
-.eyes-whisper {
-  position: fixed;
-  left: 50%;
-  bottom: 12%;
-  transform: translateX(-50%);
-  z-index: 300;
-  pointer-events: none;
-  font-family: var(--font-display, Georgia, serif);
-  font-size: 1.5rem;
-  letter-spacing: 0.24em;
-  text-transform: lowercase;
-  color: rgba(226, 214, 200, 0.86);
-  text-shadow:
-    0 0 18px rgba(0, 0, 0, 0.9),
-    0 0 42px rgba(0, 0, 0, 0.7),
-    0 1px 0 rgba(0, 0, 0, 0.8);
-  animation: whisperIn 1.1s ease-out;
-  white-space: nowrap;
+.eyes-haze::before,
+.eyes-haze::after {
+  content: '';
+  position: absolute;
+  inset: 0;
 }
 
-@keyframes whisperIn {
-  0% { opacity: 0; letter-spacing: 0.5em; filter: blur(6px); }
-  100% { opacity: 1; letter-spacing: 0.24em; filter: blur(0); }
+.eyes-haze {
+  background:
+    radial-gradient(38% 30% at 20% 24%, rgba(14, 10, 14, 0.75) 0%, rgba(0, 0, 0, 0) 68%),
+    radial-gradient(32% 26% at 78% 34%, rgba(10, 8, 12, 0.7) 0%, rgba(0, 0, 0, 0) 70%),
+    radial-gradient(46% 34% at 52% 86%, rgba(8, 6, 10, 0.8) 0%, rgba(0, 0, 0, 0) 72%);
+  animation: hazeSlow 46s ease-in-out infinite alternate;
 }
+
+.eyes-haze::before {
+  background:
+    radial-gradient(30% 22% at 62% 18%, rgba(16, 11, 16, 0.6) 0%, rgba(0, 0, 0, 0) 66%),
+    radial-gradient(36% 28% at 12% 62%, rgba(12, 9, 13, 0.65) 0%, rgba(0, 0, 0, 0) 70%),
+    radial-gradient(28% 24% at 88% 72%, rgba(9, 7, 11, 0.6) 0%, rgba(0, 0, 0, 0) 68%);
+  animation: hazeCounter 61s ease-in-out infinite alternate;
+}
+
+.eyes-haze::after {
+  background:
+    radial-gradient(24% 18% at 36% 46%, rgba(18, 12, 18, 0.5) 0%, rgba(0, 0, 0, 0) 64%),
+    radial-gradient(22% 16% at 70% 54%, rgba(14, 10, 15, 0.45) 0%, rgba(0, 0, 0, 0) 66%);
+  animation: hazeBreath 27s ease-in-out infinite alternate;
+}
+
+@keyframes hazeSlow {
+  0% { transform: translate3d(0, 0, 0) scale(1) rotate(0deg); }
+  50% { transform: translate3d(-3%, 2%, 0) scale(1.14) rotate(3deg); }
+  100% { transform: translate3d(3%, -1.5%, 0) scale(1.05) rotate(-2deg); }
+}
+
+@keyframes hazeCounter {
+  0% { transform: translate3d(2%, -1%, 0) scale(1.1) rotate(-3deg); opacity: 0.75; }
+  50% { transform: translate3d(-2%, 2%, 0) scale(1) rotate(2deg); opacity: 1; }
+  100% { transform: translate3d(1%, 1%, 0) scale(1.16) rotate(4deg); opacity: 0.8; }
+}
+
+@keyframes hazeBreath {
+  0% { transform: scale(1.2); opacity: 0.4; }
+  50% { transform: scale(1); opacity: 0.85; }
+  100% { transform: scale(1.24); opacity: 0.5; }
+}
+

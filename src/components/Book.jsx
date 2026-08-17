@@ -7,7 +7,13 @@ import CornerConstellations from './CornerConstellations';
 import CornerCrystals from './CornerCrystals';
 import RenaissanceEyes from './RenaissanceEyes';
 import EyeTrial from './EyeTrial';
-import PaintingEyes from './PaintingEyes';
+import PaintingEyes, { EYE_MAPS, FINAL_WORK } from './PaintingEyes';
+import GlyphText from './GlyphText';
+import PentagramLayer from './PentagramLayer';
+import ScreenVeins from './ScreenVeins';
+import GardenLayer from './GardenLayer';
+import BeyondGate from './BeyondGate';
+import CornerEyes from './CornerEyes';
 import TrialOverlay from './TrialOverlay';
 import GenesisTrial, { SEAM_STAGES } from './GenesisTrial';
 import {
@@ -31,6 +37,7 @@ const ENABLE_PHOTO_FLIP = false;
 // Chapters whose pages hold their artwork with stars instead of paper corners
 const COSMIC_CHAPTERS = ['Тёмная тропа'];
 const CRYSTAL_CHAPTERS = ['Генезис'];
+const EYE_HOLD_CHAPTERS = ['Ренессанс'];
 
 export default function Book() {
   const [drawings, setDrawings] = useState([]);
@@ -252,9 +259,20 @@ export default function Book() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [rush, setRush] = useState(null);
   const rushTimers = useRef([]);
-  const [eyeScatter, setEyeScatter] = useState(false);
   const [eyeEscapes, setEyeEscapes] = useState(0);
+  const [eyesClosed, setEyesClosed] = useState({});
+  const [eyeScatter, setEyeScatter] = useState(false);
+  // Сад распускается целиком, когда цепи главы пали
+  const [gardenBloom, setGardenBloom] = useState(false);
+  // Граница глав: сцена с огоньком, стеной и чистой книгой
+  const [beyondScene, setBeyondScene] = useState(false);
+  const [bookDrift, setBookDrift] = useState(0);
   const [blackout, setBlackout] = useState(false);
+  // Прощание знака: слой держится ещё несколько секунд после начертанного глаза,
+  // разгорается, проворачивается и гаснет, отпуская работу
+  const [unveil, setUnveil] = useState(false);
+  const unveilTimers = useRef([]);
+  const [beaconCry, setBeaconCry] = useState(null);
   const hurledRef = useRef(false);
   const playPaperSoundRef = useRef(null);
   const [seamStage, setSeamStage] = useState(0);
@@ -267,17 +285,30 @@ export default function Book() {
   // Переброс живёт вне эффекта: смена страницы перезапускала бы его и
   // сбрасывала собственные таймеры, оставляя экран чёрным навсегда
   const hurlTimers = useRef([]);
-  const hurlTo = useCallback((index) => {
-    hurlTimers.current.forEach(clearTimeout);
-    setBlackout(true);
-    hurlTimers.current = [
-      setTimeout(() => playPaperSoundRef.current && playPaperSoundRef.current(), 420),
-      setTimeout(() => setCurrentIndex(index), 1150),
-      setTimeout(() => setBlackout(false), 1400)
-    ];
+  // Пока сцена идёт, ввод книги мёртв: иначе успевшее уйти перетаскивание
+  // доводит страницу до конца уже под темнотой, и человек оказывается не там
+  const sceneLockRef = useRef(false);
+  const [sceneLocked, setSceneLocked] = useState(false);
+  const lockScene = useCallback((on) => {
+    sceneLockRef.current = on;
+    setSceneLocked(on);
   }, []);
 
+  const hurlTo = useCallback((index) => {
+    hurlTimers.current.forEach(clearTimeout);
+    lockScene(true);
+    setBlackout(true);
+    hurlTimers.current = [
+      // страница шелестит в самой глубине темноты, когда смотреть уже не на что
+      setTimeout(() => playPaperSoundRef.current && playPaperSoundRef.current(), 1500),
+      setTimeout(() => setCurrentIndex(index), 2100),
+      setTimeout(() => setBlackout(false), 2600),
+      setTimeout(() => lockScene(false), 3400)
+    ];
+  }, [lockScene]);
+
   useEffect(() => () => hurlTimers.current.forEach(clearTimeout), []);
+  useEffect(() => () => unveilTimers.current.forEach(clearTimeout), []);
 
   useEffect(() => {
     if (!INTERACTIVE_MODE || cheat) return;
@@ -287,18 +318,119 @@ export default function Book() {
     const last = lastPageOfChapter['chapter-3'];
     if (last === undefined) return;
     hurledRef.current = true;
-    hurlTo(last);
-  }, [currentIndex, drawings, progress, cheat, lastPageOfChapter, hurlTo]);
 
-  // Вернувшись к маяку и замерев, получаешь то, чего нет больше нигде:
-  // глаза расходятся в стороны и открывают середину
+    // Первый заход: тьма съедает разворот целиком, из неё кричит «ВЕРНИСЬ!»,
+    // шелестит страница — и человек уже у жрицы. Задника он не увидит.
+    hurlTimers.current.forEach(clearTimeout);
+    lockScene(true);
+    setBlackout(true);
+    hurlTimers.current = [
+      setTimeout(() => setBeaconCry('ВЕРНИСЬ!'), 1800),
+      setTimeout(() => playPaperSoundRef.current && playPaperSoundRef.current(), 4600),
+      setTimeout(() => setBeaconCry(null), 4900),
+      setTimeout(() => setCurrentIndex(last), 5200),
+      setTimeout(() => setBlackout(false), 6000),
+      setTimeout(() => lockScene(false), 6800)
+    ];
+  }, [currentIndex, drawings, progress, cheat, lastPageOfChapter, hurlTo, lockScene]);
+
+  // Вернувшись к маяку и замерев, слышишь второе: чего от тебя хотят
+  useEffect(() => {
+    if (!INTERACTIVE_MODE || cheat) return undefined;
+    const here = drawings[currentIndex];
+    const atBeacon = Boolean(here && here.title === BEACON_TITLE && hurledRef.current);
+    if (!atBeacon || progress.done['chapter-3']) return undefined;
+    // пока идёт сама сцена, второй крик молчит: иначе он успевает мигнуть
+    // поверх первого, пока темнота ещё не разошлась
+    if (sceneLocked || blackout) return undefined;
+
+    let idle = null;
+    const wake = () => {
+      clearTimeout(idle);
+      setBeaconCry((prev) => (prev === 'ОТДАЙ СВОЙ ГЛАЗ' ? null : prev));
+      idle = setTimeout(() => setBeaconCry('ОТДАЙ СВОЙ ГЛАЗ'), 3200);
+    };
+    wake();
+    window.addEventListener('pointermove', wake);
+    window.addEventListener('pointerdown', wake);
+    return () => {
+      clearTimeout(idle);
+      window.removeEventListener('pointermove', wake);
+      window.removeEventListener('pointerdown', wake);
+      setBeaconCry(null);
+    };
+  }, [currentIndex, drawings, progress, cheat, sceneLocked, blackout]);
+
+  // У маяка глаза отводят взгляд от работы: зрачки уходят прочь от середины
   useEffect(() => {
     if (!INTERACTIVE_MODE) { setEyeScatter(false); return undefined; }
     const here = drawings[currentIndex];
-    const atBeacon = Boolean(here && here.title === BEACON_TITLE && hurledRef.current);
-    setEyeScatter(atBeacon);
+    setEyeScatter(Boolean(here && here.title === BEACON_TITLE && hurledRef.current));
     return undefined;
   }, [currentIndex, drawings]);
+
+  // Пока на странице остались открытые глаза, назад не уйти: ни стрелкой,
+  // ни перетаскиванием. Вперёд — пожалуйста.
+  const eyesHere = drawings[currentIndex] ? EYE_MAPS[drawings[currentIndex].title] : null;
+  const backLocked = Boolean(
+    INTERACTIVE_MODE && !cheat && eyesHere && !progress.done['chapter-3'] &&
+    (eyesClosed[drawings[currentIndex].title] || []).length < eyesHere.length
+  );
+
+  // Замок стоит на последнем развороте Переосмысления, у самой границы глав
+  const chainGateHere = Boolean(
+    INTERACTIVE_MODE && !cheat &&
+    currentChapterId === 'chapter-4' &&
+    !progress.done['chapter-4'] &&
+    currentIndex === lastPageOfChapter['chapter-4']
+  );
+  const chainGateRef = useRef(chainGateHere);
+  useEffect(() => { chainGateRef.current = chainGateHere; }, [chainGateHere]);
+
+  // Сцена запускается один раз: с этого мига книга больше не слушается рук
+  const startedBeyondRef = useRef(false);
+  const startBeyondRef = useRef(() => {});
+  const startBeyond = useCallback((fromAngle) => {
+    if (startedBeyondRef.current || !chainGateRef.current) return;
+    startedBeyondRef.current = true;
+    // рука больше не ведёт лист: дальше он идёт сам
+    dragRef.current.pendingAngle = null;
+    dragRef.current.pendingDirection = null;
+    lockScene(true);
+
+    // сколько ещё осталось поднять: подхваченный рукой лист идёт вверх меньше
+    const from = Math.abs(fromAngle || 0);
+    const lift = Math.round(Math.max(500, (52 - from) * 27));
+
+    // лист трогается неспешно и у верхней точки замирает
+    setDragState({
+      isDragging: false,
+      angle: -52,
+      direction: 'next',
+      isReleasing: true,
+      releaseDuration: lift,
+      releaseEase: 'cubic-bezier(0.22, 0.55, 0.25, 1)'
+    });
+
+    // из-под приподнятого края выбирается огонёк
+    const sparkAt = lift + 120;
+    setTimeout(() => setBeyondScene(true), sparkAt);
+
+    // лист стоит открытым, пока свет выползает, и лишь потом ложится обратно
+    const closeAt = sparkAt + 1200;
+    setTimeout(() => setDragState({
+      isDragging: false,
+      angle: 0,
+      direction: 'next',
+      isReleasing: true,
+      releaseDuration: 1700,
+      releaseEase: 'cubic-bezier(0.34, 0.02, 0.26, 1)'
+    }), closeAt);
+    setTimeout(() => setDragState({
+      isDragging: false, angle: 0, direction: null, isReleasing: false, releaseDuration: 800
+    }), closeAt + 1750);
+  }, [lockScene]);
+  useEffect(() => { startBeyondRef.current = startBeyond; }, [startBeyond]);
 
   const [tamed, setTamed] = useState(false);
   const [decor, setDecor] = useState(null);
@@ -398,7 +530,7 @@ export default function Book() {
       'Тёмная тропа': 'constellation',
       'Генезис': 'cave',
       'Ренессанс': 'gloom',
-      'Современность': 'orbit',
+      'Переосмысление': 'garden',
       'За гранью': 'watercolor'
     };
 
@@ -797,6 +929,9 @@ export default function Book() {
         return;
       }
 
+      // В саду нажатие ничего не делает: глава про то, что делать не надо
+      if (eraRef.current.era === 'garden') return;
+
       for (let i = 0; i < 15; i++) {
         particlesRef.current.particles.push({
           x: e.clientX + (Math.random() - 0.5) * 10,
@@ -812,7 +947,17 @@ export default function Book() {
     };
     window.addEventListener('click', handleWindowClick);
 
+    let lastSky = 0;
+    const SKY_STEP = 1000 / 40;
+
     const animate = () => {
+      // Небо живёт своим ходом: полный шаг монитора ему ни к чему,
+      // а при свёрнутом окне оно замирает вовсе
+      const nowSky = performance.now();
+      if (document.hidden) { animationId = requestAnimationFrame(animate); return; }
+      if (nowSky - lastSky < SKY_STEP) { animationId = requestAnimationFrame(animate); return; }
+      lastSky = nowSky;
+
       // Smooth Lerping Utility
       const lerpColor = (current, target, factor = 0.015) => {
         return [
@@ -1305,6 +1450,8 @@ export default function Book() {
       }
 
       // 4. Update and Draw Particles
+      // В саду фоновых точек нет вовсе: за фон отвечает слой с цветами
+      if (era === 'garden') { particles.length = 0; }
       for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
 
@@ -1619,9 +1766,15 @@ export default function Book() {
   useEffect(() => { playPaperSoundRef.current = playPaperSound; });
 
   const handleNext = useCallback((isAuto = false) => {
-    if (holdingGem) return;
+    if (holdingGem || sceneLockRef.current) return;
     if (isAuto !== true && isPlaying) setIsPlaying(false);
     if (forwardLocked) {
+      // у границы Переосмысления страница не упирается: она честно идёт вверх
+      if (chainGateRef.current && !startedBeyondRef.current) {
+        playPaperSound();
+        startBeyondRef.current(0);
+        return;
+      }
       refuseForward();
       return;
     }
@@ -1631,7 +1784,7 @@ export default function Book() {
       setFlipDirection('next');
       setIsFlipping(true);
       setTimeout(() => {
-        setCurrentIndex(prev => prev + 1);
+        if (!sceneLockRef.current) setCurrentIndex(prev => prev + 1);
         setIsFlipping(false);
         setFlipDirection(null);
       }, 800); // SLOW FLIP
@@ -1645,7 +1798,8 @@ export default function Book() {
   }, [handleNext]);
 
   const handlePrev = useCallback((isAuto = false) => {
-    if (holdingGem) return;
+    if (holdingGem || sceneLockRef.current) return;
+    if (backLocked) { refuseForward(); return; }
     if (isAuto !== true && isPlaying) setIsPlaying(false);
     if (currentIndex > 0 && !isFlipping) {
       playPaperSound();
@@ -1653,12 +1807,12 @@ export default function Book() {
       setFlipDirection('prev');
       setIsFlipping(true);
       setTimeout(() => {
-        setCurrentIndex(prev => prev - 1);
+        if (!sceneLockRef.current) setCurrentIndex(prev => prev - 1);
         setIsFlipping(false);
         setFlipDirection(null);
       }, 800); // SLOW FLIP
     }
-  }, [currentIndex, isFlipping]);
+  }, [currentIndex, isFlipping, backLocked, refuseForward, holdingGem, isPlaying]);
 
   // Autoplay Effect
   useEffect(() => {
@@ -1689,6 +1843,7 @@ export default function Book() {
   const jumpTo = (target) => {
     // Пачка должна долететь: иначе второе нажатие рвёт анимацию на середине
     if (isFlipping || rush || dragState.isDragging || dragState.isReleasing) return;
+    if (sceneLockRef.current) return;
     if (target === currentIndex) return;
     const dir = target > currentIndex ? 'next' : 'prev';
     const distance = Math.abs(target - currentIndex);
@@ -1806,9 +1961,10 @@ export default function Book() {
   };
 
   const handlePointerDown = (e) => {
-    if (holdingGem || rush) return;
-    // во время испытания Ренессанса по странице чертят, а не листают её
-    if (trialActive && currentChapterId === 'chapter-3') return;
+    if (holdingGem || rush || sceneLockRef.current) return;
+    // Пока пентаграмма не собрана, страница листается как обычно.
+    // Черчение перехватывает ввод только когда все глаза на месте.
+    if (trialActive && currentChapterId === 'chapter-3' && eyesTaken >= eyesTotal) return;
     if (e.button !== 0 && e.pointerType === 'mouse') return;
     if (isFlipping || dragState.isReleasing) return;
 
@@ -1873,8 +2029,15 @@ export default function Book() {
         if (R < 0 && deltaX < 0) return;
 
         direction = R > 0 ? 'next' : 'prev';
-        // Запертая глава не показывает даже краешка: страницу не поднять вовсе
-        if (direction === 'next' && forwardLocked) {
+        // Пока глаза открыты, назад страницу не увести
+        if (direction === 'prev' && backLocked) {
+          refuseForward();
+          resetDragState();
+          return;
+        }
+        // Запертая глава не показывает даже краешка: страницу не поднять вовсе.
+        // Но там, где стоит замок из цепей, поднять её можно — до упора
+        if (direction === 'next' && forwardLocked && !chainGateRef.current) {
           refuseForward();
           resetDragState();
           return;
@@ -1895,7 +2058,13 @@ export default function Book() {
     const d = clientX - centerX;
     const ratio = Math.max(-1, Math.min(1, d / R));
     const naturalAngle = Math.acos(ratio) * (180 / Math.PI);
-    const angle = direction === 'next' ? -naturalAngle : naturalAngle;
+    let angle = direction === 'next' ? -naturalAngle : naturalAngle;
+
+    // У границы глав лист идёт свободно, как любой другой: в него ничего не
+    // упирается. Сцена начинается сама, когда его подняли достаточно высоко
+    if (direction === 'next' && chainGateRef.current && angle < -36 && startBeyondRef.current) {
+      startBeyondRef.current(angle);
+    }
 
     dragRef.current.pendingAngle = angle;
     dragRef.current.pendingDirection = direction;
@@ -1966,6 +2135,10 @@ export default function Book() {
 
     if (direction === 'next' && forwardLocked) {
       complete = false;
+      if (!chainGateRef.current) refuseForward();
+    }
+    if (direction === 'prev' && backLocked) {
+      complete = false;
       refuseForward();
     }
 
@@ -1985,7 +2158,7 @@ export default function Book() {
     if (complete) playPaperSound();
 
     setTimeout(() => {
-      if (complete) {
+      if (complete && !sceneLockRef.current) {
         setPhotoFlipped(false);
         if (direction === 'next') {
           setCurrentIndex(prev => Math.min(prev + 1, drawings.length - 1));
@@ -2072,7 +2245,7 @@ export default function Book() {
     };
   };
 
-  const renderLeftFace = (drawing, isBack = false) => {
+  const renderLeftFace = (drawing, isBack = false, isStatic = false) => {
     if (!drawing) return null;
     const faceClass = isBack ? 'back' : 'front';
 
@@ -2113,10 +2286,26 @@ export default function Book() {
           key="photo-wrapper"
           style={drawing.w && drawing.h ? { aspectRatio: `${drawing.w} / ${drawing.h}` } : undefined}
         >
+          {drawing.title === FINAL_WORK && (!progress.done['chapter-3'] || unveil) && INTERACTIVE_MODE && !cheat && (
+            <PentagramLayer taken={takenEyes} total={eyesTotal} finale={unveil} />
+          )}
+
           {drawing.chapterId === 'chapter-3' && !progress.done['chapter-3'] && (
             <PaintingEyes
+              key={`eyes-${drawing.id}-${isStatic ? 'flat' : 'flip'}`}
               title={drawing.title}
-              onEscape={() => setEyeEscapes((v) => v + 1)}
+              live={isStatic}
+              closed={eyesClosed[drawing.title] || []}
+              manifest={decor}
+              soundEnabled={soundEnabled}
+              onEscape={(from, index) => {
+                setEyeEscapes((v) => v + 1);
+                setEyesClosed((prev) => {
+                  const list = prev[from] || [];
+                  if (list.includes(index)) return prev;
+                  return { ...prev, [from]: [...list, index] };
+                });
+              }}
             />
           )}
 
@@ -2124,6 +2313,8 @@ export default function Book() {
             <CornerConstellations seed={drawing.id} />
           ) : CRYSTAL_CHAPTERS.includes(drawing.chapterTitle) ? (
             <CornerCrystals seed={drawing.id} />
+          ) : EYE_HOLD_CHAPTERS.includes(drawing.chapterTitle) ? (
+            <CornerEyes seed={drawing.id} avert={eyeScatter && drawing.title === BEACON_TITLE} />
           ) : (
             <>
               <div className="photo-corner tl"></div>
@@ -2202,20 +2393,37 @@ export default function Book() {
     }
     // Normal Content Page
     const guardSeam = seamVisible && drawings[seamIndex] && drawing.id === drawings[seamIndex].id;
+    // Пока испытание не пройдено, у безликой жрицы не разобрать ни слова
+    const veiled = INTERACTIVE_MODE && !cheat &&
+      drawing.title === FINAL_WORK && !progress.done['chapter-3'];
     return (
       <div
         className={`page-face ${faceClass} content-page ${guardSeam ? 'seam-guard' : ''}`}
         style={themeVarsFor(drawing)}
       >
         <div className="page-header">
-          <h2>{drawing.title}</h2>
+          <h2>
+            {veiled
+              ? <GlyphText text={drawing.title} revealed={false} />
+              : drawing.title}
+          </h2>
           {(drawing.date || drawing.year) && (
             <p className="page-year">{drawing.date || `${drawing.year} год`}</p>
           )}
         </div>
         <div className="page-body">
-          <p className="page-description">{drawing.description}</p>
-          {drawing.story && <p className="page-story">{drawing.story.replace(/\.\s*$/, '')}</p>}
+          <p className="page-description">
+            {veiled
+              ? <GlyphText text={drawing.description || ''} revealed={false} />
+              : drawing.description}
+          </p>
+          {drawing.story && (
+            <p className="page-story">
+              {veiled
+                ? <GlyphText text={drawing.story.replace(/\.\s*$/, '')} revealed={false} speed={2} />
+                : drawing.story.replace(/\.\s*$/, '')}
+            </p>
+          )}
         </div>
 
         {guardSeam && decor && seamStage < SEAM_STAGES && (
@@ -2233,19 +2441,90 @@ export default function Book() {
     );
   };
 
+  // Сад считает открытые работы главы: каждая пускает свой стебель
+  const GARDEN_CHAPTER = 'chapter-4';
+  const gardenActive = INTERACTIVE_MODE &&
+    (currentChapterId === GARDEN_CHAPTER || chapterIdOf(drawings[seamIndex]) === GARDEN_CHAPTER);
+  const gardenGrown = drawings.reduce(
+    (n, d) => (d.chapterId === GARDEN_CHAPTER && progress.seen[d.id] ? n + 1 : n), 0
+  );
+
+  const eyesTotal = Object.values(EYE_MAPS).reduce((n, list) => n + list.length, 0);
+  const eyesTaken = Object.entries(eyesClosed).reduce(
+    (n, [work, list]) => n + Math.min(list.length, (EYE_MAPS[work] || []).length), 0
+  );
+
+  // В пентаграмму встают ровно те глаза, что были сняты с работ
+  const takenEyes = Object.entries(eyesClosed).flatMap(([work, list]) =>
+    (list || [])
+      .map((i) => (EYE_MAPS[work] || [])[i])
+      .filter(Boolean)
+      .map((spec) => ({
+        style: spec.style || 'plain',
+        exit: spec.exit,
+        flat: spec.flat || 0.55,
+        big: (spec.r || 0.05) > 0.07,
+        twin: spec.exit === 'split'
+      }))
+  );
+
   const renaissanceSeen = INTERACTIVE_MODE
     ? drawings.reduce((n, d) => n + (d.chapterId === 'chapter-3' && progress.seen[d.id] ? 1 : 0), 0)
     : 0;
 
   return (
-    <div className="book-container">
+    <div className={`book-container ${beyondScene ? 'beyond-scene' : ''}`}>
       <canvas ref={canvasRef} className="background-canvas" />
 
       <div className={`chapter-blackout ${blackout ? 'on' : ''}`} aria-hidden="true"></div>
 
+      {beaconCry && <div className="beacon-cry" key={beaconCry}>{beaconCry}</div>}
+
+      <GardenLayer
+        bookRef={bookRef}
+        soundEnabled={soundEnabled}
+        active={gardenActive && !beyondScene}
+        grown={progress.done[GARDEN_CHAPTER] ? Math.max(gardenGrown, 26) : gardenGrown}
+        bloom={gardenBloom || Boolean(progress.done[GARDEN_CHAPTER])}
+      />
+
+      <BeyondGate
+        active={beyondScene}
+        bookRef={bookRef}
+        soundEnabled={soundEnabled}
+        onDrift={(part) => setBookDrift(part)}
+        onFail={() => {
+          // свет погас: книга возвращается, и дорогу можно пройти заново
+          setBookDrift(0);
+          setBeyondScene(false);
+          lockScene(false);
+          startedBeyondRef.current = false;
+        }}
+        onComplete={() => {
+          // сцена дошла до белизны: глава взята, и открывается уже другая книга.
+          // Страница шелестит под белым, самого перелистывания не видно
+          if (playPaperSoundRef.current) playPaperSoundRef.current();
+          completeChallenge(GARDEN_CHAPTER);
+          setGardenBloom(true);
+          const beyond = drawings.findIndex((d) => d.chapterId === 'chapter-interactive');
+          if (beyond >= 0) setCurrentIndex(beyond);
+          setBookDrift(0);
+          setBeyondScene(false);
+          lockScene(false);
+        }}
+      />
+
+      <ScreenVeins
+        active={INTERACTIVE_MODE && (currentChapterId === 'chapter-3' || chapterIdOf(drawings[seamIndex]) === 'chapter-3')}
+        grown={eyesTaken}
+        bookRef={bookRef}
+      />
+
       <RenaissanceEyes
         active={INTERACTIVE_MODE && (currentChapterId === 'chapter-3' || chapterIdOf(drawings[seamIndex]) === 'chapter-3')}
         groups={eyeEscapes}
+        manifest={decor}
+        soundEnabled={soundEnabled}
         scatter={eyeScatter}
       />
 
@@ -2265,9 +2544,23 @@ export default function Book() {
       <EyeTrial
         active={trialActive && currentChapterId === 'chapter-3'}
         bookRef={bookRef}
-        onComplete={() => completeChallenge('chapter-3')}
+        collected={eyesTaken}
+        total={eyesTotal}
+        taken={takenEyes}
+        onComplete={() => {
+          // сперва знак прощается, и лишь когда работа проступит целиком,
+          // глава считается пройденной
+          setUnveil(true);
+          unveilTimers.current.forEach(clearTimeout);
+          unveilTimers.current = [
+            setTimeout(() => completeChallenge('chapter-3'), 3400),
+            setTimeout(() => setUnveil(false), 4200)
+          ];
+        }}
         onMiss={() => {
-          // промах отбрасывает к маяку главы: там всё уже сказано
+          // промах отбрасывает к маяку главы: там всё уже сказано.
+          // Но если испытание уже взято, назад не тянем ни при каких щелчках
+          if (unveil || progress.done['chapter-3']) return;
           const beacon = drawings.findIndex((d) => d.title === BEACON_TITLE);
           if (beacon >= 0) hurlTo(beacon);
         }}
@@ -2327,7 +2620,17 @@ export default function Book() {
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerCancel}
-          style={{ touchAction: 'none' }}
+          style={{
+            touchAction: 'none',
+            // пока идёт сцена, книга отъезжает влево вслед за огоньком
+            transform: beyondScene || bookDrift
+              ? `translateX(${-bookDrift * 46}vw) scale(${1 - bookDrift * 0.12})`
+              : undefined,
+            opacity: beyondScene || bookDrift ? Math.max(0, 1 - bookDrift * 1.25) : undefined,
+            transition: beyondScene || bookDrift
+              ? 'transform 1.1s ease-out, opacity 1.1s ease-out'
+              : undefined
+          }}
         >
           
             {/* Static Left Page (Shows underneath drawing during prev flip) */}
@@ -2337,7 +2640,7 @@ export default function Book() {
                 visibility: isCoverClosed ? 'hidden' : 'visible',
                 transition: isCoverClosed ? 'opacity 0.2s ease 0s, visibility 0s linear 0.2s' : 'opacity 0.6s ease 0.3s, visibility 0s linear 0s' 
               }}>
-                {renderLeftFace(staticLeftDrawing, false)}
+                {renderLeftFace(staticLeftDrawing, false, true)}
               </div>
             )}
 
@@ -2354,7 +2657,7 @@ export default function Book() {
                 showNextDrag
                   ? {
                       transform: `rotateY(${dragState.angle}deg)`,
-                      transition: dragState.isReleasing ? `transform ${dragState.releaseDuration}ms cubic-bezier(0.645, 0.045, 0.355, 1)` : 'none',
+                      transition: dragState.isReleasing ? `transform ${dragState.releaseDuration}ms ${dragState.releaseEase || 'cubic-bezier(0.645, 0.045, 0.355, 1)'}` : 'none',
                       zIndex: 10,
                       '--shade': dragState.isReleasing ? 0 : Math.round(Math.sin(Math.abs(dragState.angle) * Math.PI / 180) * 55) / 100,
                       '--shade-dur': `${dragState.releaseDuration}ms`
@@ -2382,7 +2685,7 @@ export default function Book() {
                 showPrevDrag
                   ? {
                       transform: `rotateY(${dragState.angle}deg)`,
-                      transition: dragState.isReleasing ? `transform ${dragState.releaseDuration}ms cubic-bezier(0.645, 0.045, 0.355, 1)` : 'none',
+                      transition: dragState.isReleasing ? `transform ${dragState.releaseDuration}ms ${dragState.releaseEase || 'cubic-bezier(0.645, 0.045, 0.355, 1)'}` : 'none',
                       zIndex: 10,
                       '--shade': dragState.isReleasing ? 0 : Math.round(Math.sin(Math.abs(dragState.angle) * Math.PI / 180) * 55) / 100,
                       '--shade-dur': `${dragState.releaseDuration}ms`
@@ -2440,7 +2743,7 @@ export default function Book() {
         <button 
           className="control-btn nav-btn" 
           onClick={handlePrev} 
-          disabled={currentIndex === 0 || isFlipping}
+          disabled={currentIndex === 0 || isFlipping || backLocked || sceneLocked}
           title="Предыдущая страница"
         >
           <ChevronLeft size={24} />
@@ -2457,7 +2760,7 @@ export default function Book() {
         <button 
           className="control-btn nav-btn" 
           onClick={handleNext} 
-          disabled={currentIndex === drawings.length - 1 || isFlipping}
+          disabled={currentIndex === drawings.length - 1 || isFlipping || sceneLocked}
           title="Следующая страница"
         >
           <ChevronRight size={24} />

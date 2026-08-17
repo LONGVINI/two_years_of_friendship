@@ -1,0 +1,13 @@
+.glyph-locked {
+  /* нечитаемое дрожит и слегка расплывается: смотреть можно, читать нельзя */
+  letter-spacing: 0.06em;
+  color: rgba(196, 186, 178, 0.72);
+  text-shadow: 0 0 10px rgba(0, 0, 0, 0.8), 0 0 22px rgba(120, 20, 24, 0.25);
+  filter: blur(0.25px);
+  animation: glyphBreath 3.4s ease-in-out infinite;
+}
+
+@keyframes glyphBreath {
+  0%, 100% { opacity: 0.78; }
+  50% { opacity: 0.95; }
+}

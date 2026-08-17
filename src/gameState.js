@@ -11,11 +11,11 @@ const STORAGE_KEY = 'ruz-portfolio-progress';
 
 // Главы, у которых есть собственное испытание. Остальные открываются
 // просто тем, что их пролистали целиком — иначе получился бы тупик.
-export const CHAPTERS_WITH_TRIAL = ['chapter-1', 'chapter-2', 'chapter-3'];
+export const CHAPTERS_WITH_TRIAL = ['chapter-1', 'chapter-2', 'chapter-3', 'chapter-4'];
 
 // Временно: эти главы считаются пройденными сразу, без чтения и испытания.
 // Пустой список — всё по-честному.
-export const PRECLEARED_CHAPTERS = ['chapter-1', 'chapter-2'];
+export const PRECLEARED_CHAPTERS = ['chapter-1', 'chapter-2', 'chapter-3'];
 const CHEAT_KEY = 'ruz-portfolio-cheat';
 
 // Отладочный ключ: пока включён, всё открыто и испытания не требуются.

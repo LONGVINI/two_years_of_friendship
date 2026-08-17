@@ -3,18 +3,9 @@ import './RenaissanceEyes.css';
 
 // Глаза Ренессанса. Копятся по мере того, как открываются работы главы,
 // делятся от щелчка и следят за курсором — пока он движется. Стоит замереть,
-// все они доворачиваются вперёд, на человека по ту сторону экрана, и в тишине
-// проступает фраза. Двинулся — фраза гаснет, глаза снова разбегаются.
-
-// Черновые фразы: порог — сколько глаз должно набраться, чтобы она открылась
-export const WHISPERS = [
-  { at: 3, text: 'ты смотришь' },
-  { at: 10, text: 'мы тоже' },
-  { at: 20, text: 'нас всё больше' },
-  { at: 32, text: 'кто-то из нас не нарисован' },
-  { at: 46, text: 'половина здесь ослеплена' },
-  { at: 62, text: 'верни то, что забрали' }
-];
+// все они доворачиваются вперёд, на человека по ту сторону экрана, и по краям
+// наползает темнота. Двинулся — глаза снова разбегаются. Слой всегда лежит
+// позади книги: на страницу глаза не выходят нигде.
 
 const STILL_DELAY = 620;      // сколько курсор должен молчать, прежде чем на него посмотрят
 const MAX_EYES = 110;
@@ -68,7 +59,7 @@ function makeEye(x, y, size) {
       ? Math.round(206 + Math.random() * 14) + ', ' + Math.round(186 + Math.random() * 12) + ', ' + Math.round(168 + Math.random() * 10)
       : Math.round(222 + Math.random() * 14) + ', ' + Math.round(216 + Math.random() * 12) + ', ' + Math.round(208 + Math.random() * 10),
     // нервные глаза не следят за курсором: рыщут по сторонам и застывают
-    nervous: Math.random() < 0.34,
+    nervous: Math.random() < 0.1,      // почти все следят за курсором
     jerkAt: performance.now() + Math.random() * 1200,
     jerk: { x: 0, y: 0 },
     rage: 0,
@@ -77,19 +68,20 @@ function makeEye(x, y, size) {
   };
 }
 
-export default function RenaissanceEyes({ active, groups, scatter, onCount }) {
+export default function RenaissanceEyes({ active, groups, scatter, manifest, soundEnabled, onCount }) {
   const canvasRef = useRef(null);
   const [alive, setAlive] = useState(false);
   const activeRef = useRef(active);
   const groupsRef = useRef(groups);
   const scatterRef = useRef(scatter);
   const countRef = useRef(onCount);
-  const [whisper, setWhisper] = useState(null);
+  const soundRef = useRef(soundEnabled);
 
   useEffect(() => { activeRef.current = active; if (active) setAlive(true); }, [active]);
   useEffect(() => { groupsRef.current = groups; }, [groups]);
   useEffect(() => { scatterRef.current = scatter; }, [scatter]);
   useEffect(() => { countRef.current = onCount; }, [onCount]);
+  useEffect(() => { soundRef.current = soundEnabled; }, [soundEnabled]);
 
   useEffect(() => {
     if (!alive) return undefined;
@@ -108,8 +100,32 @@ export default function RenaissanceEyes({ active, groups, scatter, onCount }) {
     const mouse = { x: -999, y: -999 };
     let width = 0, height = 0, frame = null;
 
+    // Звук раздражения: тронул не тот глаз — он огрызается
+    const base = import.meta.env.BASE_URL;
+    const encode = (path) => base + path.split('/').map(encodeURIComponent).join('/');
+    const makeSfx = (paths, volume, copies) => {
+      const pool = (paths || []).map((path) => ({
+        list: Array.from({ length: copies }, () => {
+          const audio = new Audio(encode(path));
+          audio.volume = volume;
+          audio.preload = 'auto';
+          return audio;
+        }),
+        i: 0
+      }));
+      return () => {
+        if (!pool.length || !soundRef.current) return;
+        const group = pool[Math.floor(Math.random() * pool.length)];
+        const audio = group.list[group.i];
+        group.i = (group.i + 1) % group.list.length;
+        try { audio.currentTime = 0; audio.play().catch(() => {}); } catch (err) { /* тишина */ }
+      };
+    };
+    const sfxMap = (manifest && manifest.sfx) || {};
+    const playRage = makeSfx(sfxMap.eyeRage, 0.5, 3);
+
     const measure = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.3);
       width = window.innerWidth; height = window.innerHeight;
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
@@ -189,7 +205,7 @@ export default function RenaissanceEyes({ active, groups, scatter, onCount }) {
         if (!placed) continue;                   // тесно — этот глаз не открывается
 
         const eye = makeEye(x, y, size);
-        eye.born = performance.now() + i * 170;   // раскрываются вразнобой
+        eye.born = performance.now() + i * 130;   // раскрываются друг за другом
         grown.push(eye);
         state.eyes.push(eye);
       }
@@ -199,6 +215,7 @@ export default function RenaissanceEyes({ active, groups, scatter, onCount }) {
     // зрачок распахивается, глаз трясётся и мечет взгляд по сторонам
     const enrage = (eye) => {
       eye.rage = 1;
+      playRage();
       eye.jerkAt = 0;
       for (const other of state.eyes) {
         if (other === eye) continue;
@@ -214,6 +231,8 @@ export default function RenaissanceEyes({ active, groups, scatter, onCount }) {
     };
 
     const onDown = (e) => {
+      // любое нажатие считается движением: отсчёт покоя начинается заново
+      state.lastMove = performance.now();
       if (!activeRef.current) return;
       const onChrome = e.target && e.target.closest &&
         e.target.closest('.book, .panel-dock, .book-bookmarks, .album-header');
@@ -232,10 +251,17 @@ export default function RenaissanceEyes({ active, groups, scatter, onCount }) {
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerdown', onDown);
 
+    let lastFrame = 0;
+    const FRAME_STEP = 1000 / 34;
+
     const draw = () => {
       const now = performance.now();
+      // при свёрнутом окне слой замирает вовсе
+      if (document.hidden) { frame = requestAnimationFrame(draw); return; }
+      if (now - lastFrame < FRAME_STEP) { frame = requestAnimationFrame(draw); return; }
+      lastFrame = now;
       const on = activeRef.current;
-      state.fade = Math.max(0, Math.min(1, state.fade + (on ? 0.014 : -0.02)));
+      state.fade = Math.max(0, Math.min(1, state.fade + (on ? 0.2 : -0.02)));
       if (!on && state.fade <= 0) { setAlive(false); return; }
       const fade = state.fade;
 
@@ -254,9 +280,12 @@ export default function RenaissanceEyes({ active, groups, scatter, onCount }) {
 
       const scatterNow = scatterRef.current;
 
+      // сколько глаз в этом кадре светятся: остальные горят без ореола
+      let glowLeft = 14;
+
       for (const eye of state.eyes) {
         if (now < eye.born) continue;             // эта пара ещё не проснулась
-        eye.open = Math.min(1, eye.open + 0.02);
+        eye.open = Math.min(1, eye.open + 0.06);
 
         eye.x += eye.ax; eye.y += eye.ay;
         if (eye.x < -40) eye.x = width + 40; else if (eye.x > width + 40) eye.x = -40;
@@ -286,6 +315,7 @@ export default function RenaissanceEyes({ active, groups, scatter, onCount }) {
 
         let tx, ty;
         if (scatterNow) {
+          // у маяка глаза отводят взгляд от работы: зрачки уходят от середины
           const dx = eye.x - width / 2, dy = eye.y - height / 2;
           const d = Math.hypot(dx, dy) || 1;
           tx = (dx / d) * r * 0.42; ty = (dy / d) * ry * 0.5;
@@ -327,7 +357,7 @@ export default function RenaissanceEyes({ active, groups, scatter, onCount }) {
         ctx.fill();
 
         // сосуды: от углов к середине, в бешенстве наливаются
-        if (lid > 0.3) {
+        if (lid > 0.3 && r > 13) {
           ctx.save();
           ctx.clip();
           ctx.strokeStyle = `rgba(150, 40, 34, ${0.22 + rage * 0.5})`;
@@ -355,7 +385,8 @@ export default function RenaissanceEyes({ active, groups, scatter, onCount }) {
           // радужку меряем по ширине: в приплюснутом глазу она иначе крошечная
           const irisR = r * (0.3 + eye.irisScale * 0.16);
 
-          if (eye.glow) {
+          if (eye.glow && glowLeft > 0 && r > 11) {
+            glowLeft -= 1;
             ctx.shadowColor = `rgba(${eye.glow}, 0.85)`;
             ctx.shadowBlur = irisR * 2.2;
           }
@@ -421,30 +452,19 @@ export default function RenaissanceEyes({ active, groups, scatter, onCount }) {
 
     frame = requestAnimationFrame(draw);
 
-    // фраза живёт в разметке, а не на канвасе: так её видно поверх книги
-    const tick = setInterval(() => {
-      const deep = state.still > 0.75 && activeRef.current;
-      if (!deep) { setWhisper(null); return; }
-      const count = state.eyes.length;
-      let text = null;
-      for (const w of WHISPERS) if (count >= w.at) text = w.text;
-      setWhisper(text);
-    }, 120);
-
     return () => {
       window.removeEventListener('resize', measure);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerdown', onDown);
-      clearInterval(tick);
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [alive]);
+  }, [alive, manifest]);
 
   if (!alive) return null;
   return (
     <>
-      <canvas ref={canvasRef} className="renaissance-eyes" />
-      {whisper && <div className="eyes-whisper" key={whisper}>{whisper}</div>}
+      <div className="eyes-haze" aria-hidden="true"></div>
+      <canvas ref={canvasRef} className="renaissance-eyes behind" />
     </>
   );
 }

@@ -62,16 +62,18 @@ function pointInside(box, p) {
   return p.x > box.minX && p.x < box.maxX && p.y > box.minY && p.y < box.maxY;
 }
 
-export default function EyeTrial({ active, bookRef, onComplete, onMiss }) {
+export default function EyeTrial({ active, bookRef, collected, total, taken, onComplete, onMiss }) {
   const canvasRef = useRef(null);
   const [alive, setAlive] = useState(false);
   const activeRef = useRef(active);
   const doneRef = useRef(onComplete);
   const missRef = useRef(onMiss);
+  const gotRef = useRef({ collected, total, taken: taken || [] });
 
   useEffect(() => { activeRef.current = active; if (active) setAlive(true); }, [active]);
   useEffect(() => { doneRef.current = onComplete; }, [onComplete]);
   useEffect(() => { missRef.current = onMiss; }, [onMiss]);
+  useEffect(() => { gotRef.current = { collected, total, taken: taken || [] }; }, [collected, total, taken]);
 
   useEffect(() => {
     if (!alive) return undefined;
@@ -84,7 +86,6 @@ export default function EyeTrial({ active, bookRef, onComplete, onMiss }) {
       trail: [],          // тающий след за курсором
       stroke: null,       // текущая линия
       contour: null,      // принятый контур, ждущий зрачка
-      ring: [],
       wonAt: 0,
       shakeUntil: 0
     };
@@ -111,20 +112,7 @@ export default function EyeTrial({ active, bookRef, onComplete, onMiss }) {
         ? { x: r.left, y: r.top, w: r.width / 2, h: r.height }
         : { x: width * 0.1, y: height * 0.12, w: width * 0.4, h: height * 0.76 };
 
-      state.ring = [];
       const cx = field.x + field.w / 2, cy = field.y + field.h / 2;
-      const rx = field.w * 0.4, ry = field.h * 0.38;
-      for (let i = 0; i < RING_EYES; i++) {
-        const a = (i / RING_EYES) * Math.PI * 2 - Math.PI / 2;
-        state.ring.push({
-          x: cx + Math.cos(a) * rx,
-          y: cy + Math.sin(a) * ry,
-          r: 11 + Math.random() * 7,
-          tilt: a + Math.PI / 2,
-          blink: 0,
-          blinkAt: performance.now() + 1500 + Math.random() * 5000
-        });
-      }
       state.center = { x: cx, y: cy };
     };
 
@@ -143,13 +131,18 @@ export default function EyeTrial({ active, bookRef, onComplete, onMiss }) {
       state.shakeUntil = performance.now() + 500;
       state.contour = null;
       state.stroke = null;
-      for (const eye of state.ring) eye.blink = 1;
       if (missRef.current) missRef.current();
     };
 
     const onDown = (e) => {
       if (!activeRef.current || state.wonAt) return;
       if (!inField(e.clientX, e.clientY)) return;
+      // пока в пентаграмме есть пустые лунки, чертить нечем
+      const got = gotRef.current || { collected: 0, total: 1 };
+      if (got.collected < got.total) {
+        state.shakeUntil = performance.now() + 320;
+          return;
+      }
 
       // контур уже принят — этот щелчок ставит зрачок
       if (state.contour) {
@@ -201,50 +194,6 @@ export default function EyeTrial({ active, bookRef, onComplete, onMiss }) {
       ctx.save();
       ctx.translate(shake, 0);
 
-      // тьма поверх работы
-      ctx.fillStyle = `rgba(6, 7, 12, ${0.93 * fade})`;
-      ctx.fillRect(field.x, field.y, field.w, field.h);
-
-      // кольцо глаз, смотрящих в середину
-      for (const eye of state.ring) {
-        if (now > eye.blinkAt) { eye.blink = 1; eye.blinkAt = now + 3000 + Math.random() * 6000; }
-        eye.blink = Math.max(0, eye.blink - 0.06);
-        const lid = 1 - Math.sin(eye.blink * Math.PI) * 0.9;
-        const dx = state.center.x - eye.x, dy = state.center.y - eye.y;
-        const d = Math.hypot(dx, dy) || 1;
-
-        ctx.save();
-        ctx.translate(eye.x, eye.y);
-        ctx.rotate(eye.tilt);
-        ctx.globalAlpha = fade * 0.8;
-        ctx.beginPath();
-        ctx.moveTo(-eye.r, 0);
-        ctx.quadraticCurveTo(0, -eye.r * 0.8 * lid, eye.r, 0);
-        ctx.quadraticCurveTo(0, eye.r * 0.8 * lid, -eye.r, 0);
-        ctx.closePath();
-        ctx.fillStyle = 'rgba(226, 220, 208, 0.72)';
-        ctx.fill();
-        ctx.lineWidth = 1.1;
-        ctx.strokeStyle = 'rgba(20, 14, 12, 0.8)';
-        ctx.stroke();
-        if (lid > 0.3) {
-          ctx.save();
-          ctx.clip();
-          ctx.rotate(-eye.tilt);
-          const px = (dx / d) * eye.r * 0.34, py = (dy / d) * eye.r * 0.34;
-          ctx.beginPath();
-          ctx.arc(px, py, eye.r * 0.4, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(70, 44, 30, 0.95)';
-          ctx.fill();
-          ctx.beginPath();
-          ctx.arc(px, py, eye.r * 0.19, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(10, 7, 7, 0.98)';
-          ctx.fill();
-          ctx.restore();
-        }
-        ctx.restore();
-      }
-
       // след за курсором: чернила, которые тают
       ctx.save();
       ctx.lineCap = 'round';
@@ -284,7 +233,73 @@ export default function EyeTrial({ active, bookRef, onComplete, onMiss }) {
         drawPath(state.contour.points, pulse, 3);
       }
 
-      if (state.wonAt && state.pupil) {
+      if (state.wonAt && state.pupil && state.contour) {
+        const age = now - state.wonAt;
+        const box = state.contour.box;
+        const ecx = (box.minX + box.maxX) / 2, ecy = (box.minY + box.maxY) / 2;
+        const er = (box.maxX - box.minX) / 2;
+        const ery = Math.max(er * 0.32, (box.maxY - box.minY) / 2);
+
+        const flash = Math.max(0, 1 - age / 900);
+        if (flash > 0) {
+          ctx.fillStyle = `rgba(255, 250, 236, ${flash * 0.5})`;
+          ctx.fillRect(0, 0, width, height);
+        }
+
+        // глаз проступает, смотрит прямо, потом медленно смыкается
+        const born = Math.min(1, age / 900);
+        const lid = age < 2600 ? born : Math.max(0, 1 - (age - 2600) / 1600);
+        if (lid > 0.01) {
+          ctx.save();
+          ctx.translate(ecx, ecy);
+          ctx.globalAlpha = Math.min(1, age / 500);
+          const lidPath = () => {
+            ctx.beginPath();
+            ctx.moveTo(-er, 0);
+            ctx.bezierCurveTo(-er * 0.45, -ery * lid, er * 0.45, -ery * lid, er, 0);
+            ctx.bezierCurveTo(er * 0.5, ery * lid * 0.86, -er * 0.5, ery * lid * 0.86, -er, 0);
+            ctx.closePath();
+          };
+          lidPath();
+          ctx.fillStyle = 'rgba(238, 232, 224, 0.98)';
+          ctx.fill();
+
+          if (lid > 0.2) {
+            lidPath();
+            ctx.save();
+            ctx.clip();
+            const irisR = Math.min(ery * 0.95, er * 0.4);
+            ctx.beginPath(); ctx.arc(0, 0, irisR, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(58, 42, 34, 0.97)';
+            ctx.shadowColor = 'rgba(255, 240, 200, 0.7)';
+            ctx.shadowBlur = irisR * 1.2;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.beginPath(); ctx.arc(0, 0, irisR * 0.5, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(8, 6, 6, 0.99)'; ctx.fill();
+            ctx.beginPath(); ctx.arc(-irisR * 0.32, -irisR * 0.34, irisR * 0.2, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'; ctx.fill();
+            ctx.restore();
+          }
+
+          lidPath();
+          ctx.lineWidth = Math.max(1.2, er * 0.05);
+          ctx.strokeStyle = 'rgba(24, 18, 16, 0.9)';
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        if (age > 4400) {
+          const done = doneRef.current;
+          state.wonAt = 0;
+          if (done) done();
+        }
+        ctx.restore();
+        frame = requestAnimationFrame(draw);
+        return;
+      }
+
+      if (false && state.wonAt && state.pupil) {
         const age = now - state.wonAt;
         const grow = Math.min(1, age / 500);
         const c = state.contour ? state.contour.center : state.pupil;

@@ -1,6 +1,12 @@
 .painting-eyes {
   position: absolute;
   inset: 0;
-  z-index: 6;
+  /* ниже скотча и камней: глаза лежат на рисунке, а не поверх рамки */
+  z-index: 4;
   pointer-events: none;
+  /* слой живёт в той же плоскости, что и работа: иначе при повороте
+     страницы он отстаёт от неё и садится с рывком */
+  transform: translateZ(0.04px);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }

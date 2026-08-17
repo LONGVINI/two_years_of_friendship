@@ -1,0 +1,131 @@
+/* Сцена перехода лежит поверх всего и на время забирает управление */
+.beyond-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  cursor: crosshair;
+}
+
+/* Надпись на белом: проступает медленно и так же медленно уходит */
+.beyond-words {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 401;
+  pointer-events: none;
+  font-family: var(--font-display, Georgia, serif);
+  font-size: 1.7rem;
+  letter-spacing: 0.16em;
+  color: rgba(38, 34, 40, 0.88);
+  white-space: nowrap;
+  animation: beyondWord 2.6s ease-in-out both;
+}
+
+@keyframes beyondWord {
+  0% { opacity: 0; filter: blur(8px); letter-spacing: 0.34em; }
+  22% { opacity: 1; filter: blur(0); letter-spacing: 0.16em; }
+  78% { opacity: 1; filter: blur(0); }
+  100% { opacity: 0; filter: blur(4px); }
+}
+
+/* Пока идёт сцена, вся обвязка альбома уходит: ни закладок, ни панели */
+.book-container.beyond-scene .book-bookmarks,
+.book-container.beyond-scene .panel-dock,
+.book-container.beyond-scene .album-header {
+  /* закладки держат свою прозрачность в разметке, поэтому перебиваем силой */
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 0.8s ease-out !important;
+}
+
+/* Вопросы тьмы: белым по чёрному, медленно и холодно */
+.beyond-lost {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 401;
+  pointer-events: none;
+  font-family: var(--font-display, Georgia, serif);
+  font-size: 1.6rem;
+  letter-spacing: 0.18em;
+  color: rgba(232, 228, 236, 0.92);
+  white-space: nowrap;
+  text-align: center;
+  animation: beyondLost 7.5s ease-in-out both;
+}
+
+@keyframes beyondLost {
+  0% { opacity: 0; filter: blur(10px); letter-spacing: 0.36em; }
+  22% { opacity: 0; }
+  40% { opacity: 1; filter: blur(0); letter-spacing: 0.18em; }
+  82% { opacity: 1; }
+  100% { opacity: 0; filter: blur(5px); }
+}
+
+/* Название главы проступает последним, уже на белом */
+.beyond-title {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 401;
+  pointer-events: none;
+  font-family: var(--font-display, Georgia, serif);
+  font-size: 3.4rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: rgba(30, 26, 32, 0.9);
+  white-space: nowrap;
+  animation: beyondTitle 3.2s ease-in-out both;
+}
+
+@keyframes beyondTitle {
+  0% { opacity: 0; letter-spacing: 0.7em; filter: blur(14px); }
+  30% { opacity: 1; letter-spacing: 0.3em; filter: blur(0); }
+  76% { opacity: 1; }
+  100% { opacity: 0; filter: blur(6px); }
+}
+
+/* Тихая строка между боями: серая, приходит и уходит сама */
+/* Мысль ничего не перекрывает: она лежит под всем, что происходит */
+.beyond-tale {
+  position: fixed;
+  left: 50%;
+  /* не по центру: строка идёт поверху, над дорогой */
+  top: 15%;
+  z-index: 402;
+  pointer-events: none;
+  /* голос рассказчика: не тот, которым кричат слова на дороге */
+  font-family: var(--font-quote, Georgia, serif);
+  font-style: italic;
+  font-weight: 400;
+  font-size: clamp(1.6rem, 3.6vh, 2.8rem);
+  letter-spacing: 0.02em;
+  color: rgba(242, 240, 246, 0.96);
+  text-shadow:
+    0 0 4px rgba(0, 0, 0, 0.95),
+    0 0 22px rgba(0, 0, 0, 0.85);
+  white-space: nowrap;
+  /* приходит справа, плывёт вместе с миром и уходит влево */
+  opacity: 0;
+  transform: translate(-50%, -50%) translateX(220px);
+  transition: opacity 1.2s ease, transform 8s linear;
+}
+
+/* Строка стоит либо поверху, либо понизу, но идёт всегда ровно */
+.beyond-tale.high { top: 15%; }
+
+.beyond-tale.low { top: 79%; }
+
+.beyond-tale.on {
+  opacity: 1;
+  transform: translate(-50%, -50%) translateX(-260px);
+}
+
+/* Гаснет она, не прекращая движения: класс `on` остаётся на месте */
+.beyond-tale.on.fade {
+  opacity: 0;
+}
+
